@@ -13,11 +13,18 @@ This guide walks through deploying the full RankPilot stack on [Railway](https:/
 | **Postgres** | Railway plugin | PostgreSQL 16 with pgvector |
 | **Redis** | Railway plugin | Redis 7 (for APScheduler job queue) |
 
-### Critical: avoid “Build failed” on a monorepo
+### Critical: Railpack / Metal — “could not determine how to build the app”
 
-If Railway deploys the **repository root** (no subdirectory), Nixpacks sees both `backend/pyproject.toml` and `frontend/package.json` and the image build often **fails in ~5 seconds**.
+If the service builds from the **repository root** with **Root Directory empty**, **Railpack** only sees folders `backend/` and `frontend/` and **no** `package.json` or `pyproject.toml` at the root, so it exits with *Railpack could not determine how to build the app*. Nested `frontend/railway.toml` is **skipped** in that mode (Railway only accepts a config file rooted at the repo root unless you set paths in the UI).
 
-**Fix (recommended — one GitHub repo):** for **each** deployable service, open **Settings → Source → Root Directory** and set either `backend` or `frontend`. Create **two** services from the same repo if you need both API and SPA.
+You can fix this in either way:
+
+1. **Dockerfile (works with repo root, no Root Directory)**  
+   This repo includes a **root `Dockerfile`** that builds the **API** from `backend/` + `infra/sql/`. Railway detects it and uses the **Docker** builder instead of Railpack for the default service.  
+   For the **frontend** service, open **Settings → Build → Dockerfile path** and set **`frontend/Dockerfile`** (still use **empty** Root Directory so `COPY frontend/…` works). Do **not** use the root Dockerfile for the frontend.
+
+2. **Root Directory (Railpack-friendly)**  
+   Set **Settings → Source → Root Directory** to `backend` or `frontend` for each service. Optionally point **Railway config file** to `backend/railway.toml` or `frontend/railway.toml` as in [Railway monorepo docs](https://docs.railway.com/guides/monorepo).
 
 You do **not** need a local Postgres machine; use Railway’s **PostgreSQL** plugin only. The app reads `DATABASE_URL` from Railway automatically.
 
@@ -171,6 +178,10 @@ Make sure to update:
 **“Deployment failed during build process” / build ~5s then FAILED**
 
 → Almost always: **Root Directory** is empty or wrong. Set it to `backend` for the API service and `frontend` for the web app, then redeploy. Open **Deployments → failed row → View logs** and confirm Nixpacks is running from the correct folder (you should see `pyproject.toml` or `package.json` at the build root, not both at once).
+
+**Railpack: “could not determine how to build the app” / skipping `frontend/railway.toml`**
+
+→ With **Root Directory empty**, Railpack only looks at the repo root (no `pyproject.toml` / `package.json` there). Either set **Root Directory** to `backend` or `frontend`, or use the **root `Dockerfile`** for the API and **`frontend/Dockerfile`** for the SPA (see the “Critical” section above).
 
 **Build fails with "No start command"**
 → Ensure the service Root Directory is set to `backend` or `frontend` respectively.
