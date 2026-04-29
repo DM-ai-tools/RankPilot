@@ -69,8 +69,11 @@ def main() -> int:
         print("ERROR: DATABASE_URL has no database name.", file=sys.stderr)
         return 1
 
-    repo_root = Path(__file__).resolve().parent.parent.parent
-    sql_dir = repo_root / "infra" / "sql"
+    backend_root = Path(__file__).resolve().parent.parent
+    # Monorepo: ../infra/sql  |  Standalone backend repo: ./infra/sql (copy migrations there when splitting)
+    sql_dir = backend_root / "infra" / "sql"
+    if not sql_dir.is_dir():
+        sql_dir = backend_root.parent / "infra" / "sql"
     files = [
         "001_init_seo.sql",
         "002_extensions.sql",
@@ -83,6 +86,7 @@ def main() -> int:
         "009_search_radius.sql",
         "010_perf_indexes.sql",
         "011_business_nap.sql",
+        "012_citation_scraped_nap.sql",
     ]
 
     env = os.environ.copy()
