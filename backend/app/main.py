@@ -26,6 +26,15 @@ def _cors_allow_origins(settings) -> list[str]:
     return parts or ["http://localhost:5173"]
 
 
+def _cors_allow_origin_regex(settings) -> str | None:
+    """Allow all Railway-generated subdomains automatically."""
+    raw = (settings.cors_origins or "").strip()
+    # If operator set an explicit list, no regex needed.
+    if raw and "railway.app" not in raw:
+        return None
+    return r"https://.*\.railway\.app"
+
+
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     settings = get_settings()
@@ -85,6 +94,7 @@ def create_app() -> FastAPI:
     app.add_middleware(
         CORSMiddleware,
         allow_origins=_cors_allow_origins(settings),
+        allow_origin_regex=_cors_allow_origin_regex(settings),
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],

@@ -30,13 +30,24 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def _database_must_be_postgresql(self) -> "Settings":
-        """RankPilot SEO data layer is PostgreSQL only (see infra/sql). No SQLite/MySQL."""
-        u = (self.database_url or "").strip().lower()
-        if not u.startswith("postgresql+asyncpg://"):
+        """RankPilot SEO data layer is PostgreSQL only (see infra/sql). No SQLite/MySQL.
+
+        Railway (and many PaaS) supplies DATABASE_URL as ``postgresql://`` or
+        ``postgres://``; we transparently upgrade either to the asyncpg scheme.
+        """
+        u = (self.database_url or "").strip()
+        # Normalise Railway / Heroku / Supabase URL formats to asyncpg scheme.
+        for old_prefix in ("postgres://", "postgresql://"):
+            if u.startswith(old_prefix):
+                u = "postgresql+asyncpg://" + u[len(old_prefix):]
+                object.__setattr__(self, "database_url", u)
+                break
+        if not u.lower().startswith("postgresql+asyncpg://"):
             raise ValueError(
-                "DATABASE_URL must be PostgreSQL with asyncpg, e.g. "
-                "postgresql+asyncpg://postgres:PASSWORD@localhost:5432/rankpilot "
-                "(encode @ in password as %40). Apply migrations: backend/scripts/apply_migrations.py"
+                "DATABASE_URL must be PostgreSQL, e.g. "
+                "postgresql+asyncpg://postgres:PASSWORD@host:5432/rankpilot "
+                "or the plain postgresql:// form (auto-upgraded to asyncpg). "
+                "Apply migrations: backend/scripts/apply_migrations.py"
             )
         return self
 
