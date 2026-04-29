@@ -1,0 +1,96 @@
+====================================================
+  RankPilot — Why Login Auto-Fills & Skips to Dashboard
+====================================================
+
+There are TWO separate reasons this happens:
+
+
+──────────────────────────────────────────────────────
+REASON 1 — Username is hardcoded as the default value
+──────────────────────────────────────────────────────
+
+File: frontend/src/pages/LoginPage.tsx  (line 17)
+
+  const [username, setUsername] = useState("admin");
+
+The useState("admin") sets "admin" as the starting value of the
+username input field. It is a dev convenience so you do not have
+to type it every time during testing.
+
+The password field is EMPTY — it only shows "admin123" as a grey
+placeholder hint, not a real pre-filled value.
+
+
+──────────────────────────────────────────────────────
+REASON 2 — Token is remembered for the whole browser session
+──────────────────────────────────────────────────────
+
+File: frontend/src/stores/authStore.ts  (lines 17–30)
+
+The token (JWT) is saved in sessionStorage after a successful login.
+sessionStorage keeps the token alive as long as the browser TAB is open.
+
+So if you:
+  1. Log in once
+  2. Navigate away or refresh
+  3. Come back to /login
+
+...this useEffect in LoginPage fires immediately:
+
+  useEffect(() => {
+    if (!pending && existing) void navigate(from, { replace: true });
+  }, [existing, from, navigate, pending]);
+
+It sees the saved token (existing) is not null → skips the form
+entirely → redirects straight to the dashboard.
+
+
+──────────────────────────────────────────────────────
+HOW TO FORCE THE LOGIN SCREEN TO ALWAYS SHOW
+──────────────────────────────────────────────────────
+
+Option A (quickest):
+  Close the browser tab and reopen it.
+  sessionStorage is wiped on tab close, so the token is gone
+  and the login form appears normally.
+
+Option B (proper sign-out):
+  Click "Sign out" in the sidebar.
+  This calls setToken(null) which clears the token from
+  sessionStorage, so the next visit always shows the login form.
+
+Option C (remove the default username):
+  Change line 17 in LoginPage.tsx from:
+    const [username, setUsername] = useState("admin");
+  to:
+    const [username, setUsername] = useState("");
+  This stops the username from pre-filling, but the auto-redirect
+  on existing token will still apply (see Reason 2 above).
+
+
+──────────────────────────────────────────────────────
+FLOW SUMMARY
+──────────────────────────────────────────────────────
+
+User opens /login
+    │
+    ▼
+Is there a token in sessionStorage?
+    │
+    ├── YES → redirect to dashboard immediately (no form shown)
+    │
+    └── NO  → show login form
+                  │
+                  ▼
+             User fills in username (pre-filled "admin") + password
+                  │
+                  ▼
+             POST /api/v1/auth/login  →  receives JWT
+                  │
+                  ▼
+             Token saved to sessionStorage
+                  │
+                  ▼
+             Redirect to /onboarding (then auto-forward to dashboard)
+
+====================================================

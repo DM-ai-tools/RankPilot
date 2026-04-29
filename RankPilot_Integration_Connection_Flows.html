@@ -1,0 +1,1325 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1.0"/>
+<title>RankPilot SEO — Integration Connection Flows (Developer Guide)</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet"/>
+<style>
+:root{
+  --navy:#0B2545;--navy2:#1A4A8A;--teal:#1F7A8C;--orange:#C55A11;
+  --green:#22C55E;--red:#EF4444;--amber:#F59E0B;--google:#4285F4;
+  --white:#fff;--light:#F4F7FB;--border:#E0E6EF;--mid:#4A5E78;--lt:#8EA3BC;
+  --annot:#F59E0B;
+}
+*{box-sizing:border-box;margin:0;padding:0;}
+body{font-family:'Inter',sans-serif;background:#DDE4EF;color:var(--navy);}
+
+/* TOP NAV */
+.topnav{position:sticky;top:0;z-index:200;background:var(--navy);padding:10px 20px;display:flex;gap:6px;align-items:center;flex-wrap:wrap;}
+.topnav-brand{font-size:15px;font-weight:800;color:#fff;margin-right:10px;}
+.topnav-brand span{color:#F59E0B;}
+.topnav-label{color:#8EA3BC;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:1px;}
+.topnav button{background:rgba(255,255,255,0.08);border:1px solid rgba(255,255,255,0.15);color:#CBD5E1;font-size:11px;font-weight:600;font-family:'Inter',sans-serif;padding:6px 14px;border-radius:6px;cursor:pointer;transition:all 0.2s;}
+.topnav button:hover,.topnav button.active{background:var(--orange);border-color:var(--orange);color:#fff;}
+
+/* SCREENS */
+.screen{display:none;min-height:calc(100vh - 46px);}
+.screen.active{display:block;}
+
+/* SPLIT LAYOUT */
+.split{display:grid;grid-template-columns:1fr 400px;min-height:calc(100vh - 46px);}
+.mockup-col{padding:24px;overflow-y:auto;background:#DDE4EF;}
+.devnotes{background:#0B2545;color:#CBD5E1;padding:22px;overflow-y:auto;border-left:3px solid var(--annot);}
+
+/* DEV NOTES STYLES */
+.devnotes h2{font-size:12px;font-weight:800;color:var(--annot);text-transform:uppercase;letter-spacing:1px;margin-bottom:14px;padding-bottom:8px;border-bottom:1px solid rgba(255,255,255,0.1);}
+.devnotes h3{font-size:11px;font-weight:700;color:#60A5FA;text-transform:uppercase;letter-spacing:0.8px;margin:16px 0 6px;}
+.devnotes p{font-size:12px;line-height:1.7;color:#94A3B8;margin-bottom:8px;}
+.devnotes code{background:#162B44;color:#7DD3FC;font-size:11px;padding:2px 6px;border-radius:4px;font-family:monospace;}
+.devnotes pre{background:#162B44;color:#A5F3FC;font-size:10.5px;padding:10px;border-radius:6px;overflow-x:auto;margin:6px 0 10px;line-height:1.6;font-family:monospace;}
+.step-row{display:flex;align-items:flex-start;gap:8px;margin-bottom:10px;padding:8px 10px;background:rgba(255,255,255,0.04);border-radius:6px;border:1px solid rgba(255,255,255,0.06);}
+.step-row p{margin:0;font-size:12px;color:#94A3B8;line-height:1.6;}
+.step-row strong{color:#E2E8F0;display:block;margin-bottom:2px;font-size:11px;}
+.step-num{min-width:22px;height:22px;background:var(--annot);color:#000;border-radius:50%;font-size:10px;font-weight:800;display:flex;align-items:center;justify-content:center;}
+.term-box{background:#162B44;border-left:3px solid var(--teal);padding:8px 12px;border-radius:0 6px 6px 0;margin:6px 0 10px;}
+.term-box .term{font-size:11px;font-weight:700;color:#2DD4BF;margin-bottom:2px;}
+.term-box p{font-size:11px;color:#94A3B8;margin:0;}
+.api-pill{display:inline-block;background:rgba(99,102,241,0.2);border:1px solid #6366F1;color:#A5B4FC;font-size:10px;font-weight:600;padding:2px 8px;border-radius:10px;margin:2px 2px 2px 0;}
+.db-pill{display:inline-block;background:rgba(16,185,129,0.15);border:1px solid #10B981;color:#6EE7B7;font-size:10px;font-weight:600;padding:2px 8px;border-radius:10px;margin:2px 2px 2px 0;}
+.warn-box{background:rgba(245,158,11,0.1);border:1px solid rgba(245,158,11,0.3);border-radius:6px;padding:8px 10px;margin:8px 0;}
+.warn-box p{color:#FCD34D;font-size:11px;margin:0;}
+.ok-box{background:rgba(34,197,94,0.1);border:1px solid rgba(34,197,94,0.3);border-radius:6px;padding:8px 10px;margin:8px 0;}
+.ok-box p{color:#86EFAC;font-size:11px;margin:0;}
+
+/* FLOW WRAPPER */
+.flow-wrap{max-width:860px;margin:0 auto;}
+.flow-title{font-size:13px;font-weight:800;color:var(--mid);text-transform:uppercase;letter-spacing:1px;margin-bottom:14px;display:flex;align-items:center;gap:8px;}
+.flow-title .badge{padding:3px 10px;border-radius:12px;font-size:10px;font-weight:700;color:#fff;}
+
+/* STEP ARROW FLOW */
+.steps-row{display:flex;align-items:center;gap:4px;margin-bottom:20px;overflow-x:auto;}
+.flow-step{background:#fff;border:2px solid var(--border);border-radius:8px;padding:8px 12px;font-size:11px;font-weight:600;color:var(--mid);white-space:nowrap;flex-shrink:0;}
+.flow-step.active{background:var(--orange);border-color:var(--orange);color:#fff;}
+.flow-step.done{background:var(--green);border-color:var(--green);color:#fff;}
+.flow-arrow{color:var(--lt);font-size:16px;flex-shrink:0;}
+
+/* MOCKUP CARD */
+.mock-card{background:#fff;border-radius:14px;border:1px solid var(--border);box-shadow:0 4px 24px rgba(0,0,0,0.09);overflow:hidden;margin-bottom:20px;}
+.mock-card-head{padding:14px 20px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:10px;}
+.mock-card-head .icon{width:36px;height:36px;border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:18px;flex-shrink:0;}
+.mock-card-head h3{font-size:15px;font-weight:700;color:var(--navy);}
+.mock-card-head p{font-size:11px;color:var(--lt);margin-top:2px;}
+.mock-card-body{padding:20px;}
+
+/* GOOGLE OAUTH POPUP */
+.google-popup{background:#fff;border-radius:12px;border:1px solid #dadce0;box-shadow:0 8px 32px rgba(0,0,0,0.18);max-width:400px;margin:0 auto;overflow:hidden;}
+.google-popup-head{padding:20px 24px 14px;border-bottom:1px solid #e8eaed;text-align:center;}
+.google-popup-head .g-logo{font-size:18px;font-weight:700;letter-spacing:-0.5px;margin-bottom:10px;}
+.google-popup-head .g-logo span:nth-child(1){color:#4285F4;}
+.google-popup-head .g-logo span:nth-child(2){color:#EA4335;}
+.google-popup-head .g-logo span:nth-child(3){color:#FBBC04;}
+.google-popup-head .g-logo span:nth-child(4){color:#4285F4;}
+.google-popup-head .g-logo span:nth-child(5){color:#34A853;}
+.google-popup-head .g-logo span:nth-child(6){color:#EA4335;}
+.google-popup-head h4{font-size:16px;font-weight:600;color:#202124;margin-bottom:4px;}
+.google-popup-head p{font-size:12px;color:#5f6368;}
+.google-popup-body{padding:16px 24px;}
+.permission-item{display:flex;align-items:flex-start;gap:10px;padding:10px 0;border-bottom:1px solid #f1f3f4;}
+.permission-item:last-child{border-bottom:none;}
+.permission-item .picon{font-size:18px;width:24px;text-align:center;flex-shrink:0;margin-top:1px;}
+.permission-item .ptext{font-size:12px;color:#202124;line-height:1.5;}
+.permission-item .ptext strong{display:block;font-weight:600;}
+.google-popup-foot{padding:14px 24px;background:#f8f9fa;display:flex;gap:10px;justify-content:flex-end;}
+.g-btn{padding:8px 20px;border-radius:6px;font-size:13px;font-weight:600;cursor:pointer;border:none;font-family:'Inter',sans-serif;}
+.g-btn-cancel{background:transparent;color:#5f6368;border:1px solid #dadce0;}
+.g-btn-allow{background:#1a73e8;color:#fff;}
+
+/* PROPERTY SELECTOR */
+.property-list{border:1px solid var(--border);border-radius:8px;overflow:hidden;}
+.property-item{display:flex;align-items:center;gap:10px;padding:10px 14px;border-bottom:1px solid var(--border);cursor:pointer;transition:background 0.15s;}
+.property-item:last-child{border-bottom:none;}
+.property-item:hover,.property-item.selected{background:#EEF4FF;}
+.property-item .radio{width:16px;height:16px;border-radius:50%;border:2px solid var(--border);flex-shrink:0;}
+.property-item.selected .radio{border-color:var(--google);background:var(--google);}
+.property-item .prop-name{font-size:12px;font-weight:600;color:var(--navy);}
+.property-item .prop-url{font-size:10px;color:var(--lt);}
+
+/* FORM STYLES */
+.form-group{margin-bottom:14px;}
+.form-group label{display:block;font-size:11px;font-weight:700;color:var(--mid);margin-bottom:5px;text-transform:uppercase;letter-spacing:0.6px;}
+.form-group input{width:100%;border:1.5px solid var(--border);border-radius:8px;padding:10px 13px;font-size:13px;color:var(--navy);font-family:'Inter',sans-serif;transition:border-color 0.2s;}
+.form-group input:focus{outline:none;border-color:var(--teal);}
+.form-group input.valid{border-color:var(--green);background:#F0FFF4;}
+.form-group input.error{border-color:var(--red);background:#FEF2F2;}
+.input-hint{font-size:10px;color:var(--lt);margin-top:4px;line-height:1.5;}
+
+/* WP INSTRUCTIONS */
+.wp-step{display:flex;gap:12px;padding:12px;background:#F8FAFC;border-radius:8px;border:1px solid var(--border);margin-bottom:10px;}
+.wp-step-num{width:26px;height:26px;border-radius:50%;background:var(--navy);color:#fff;font-size:11px;font-weight:800;display:flex;align-items:center;justify-content:center;flex-shrink:0;}
+.wp-step-body{}
+.wp-step-body strong{font-size:12px;color:var(--navy);display:block;margin-bottom:3px;}
+.wp-step-body p{font-size:11px;color:var(--mid);line-height:1.6;margin:0;}
+.wp-step-body .path{font-family:monospace;font-size:11px;background:#E0E6EF;padding:2px 6px;border-radius:4px;color:var(--navy);}
+
+/* SUCCESS STATE */
+.success-card{background:#F0FFF4;border:1.5px solid #DCFCE7;border-radius:12px;padding:20px;text-align:center;}
+.success-icon{font-size:40px;margin-bottom:10px;}
+.success-card h3{font-size:16px;font-weight:700;color:var(--navy);margin-bottom:6px;}
+.success-card p{font-size:12px;color:var(--mid);line-height:1.6;}
+.success-details{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:14px;text-align:left;}
+.detail-item{background:#fff;border-radius:6px;padding:8px 10px;border:1px solid #DCFCE7;}
+.detail-item .dlabel{font-size:9px;font-weight:700;color:#15803D;text-transform:uppercase;letter-spacing:0.6px;margin-bottom:2px;}
+.detail-item .dval{font-size:11px;font-weight:600;color:var(--navy);}
+
+/* TOKEN DISPLAY */
+.token-display{font-family:monospace;font-size:10px;background:#0B2545;color:#A5F3FC;padding:8px 10px;border-radius:6px;word-break:break-all;margin:6px 0;}
+
+/* ANNOT DOT */
+.annot-dot{position:absolute;width:22px;height:22px;background:var(--annot);color:#000;border-radius:50%;font-size:10px;font-weight:800;display:flex;align-items:center;justify-content:center;border:2px solid #fff;box-shadow:0 2px 6px rgba(0,0,0,0.3);z-index:10;}
+.rel{position:relative;}
+
+/* STATUS INDICATOR */
+.status-bar{display:flex;align-items:center;gap:8px;padding:10px 14px;border-radius:8px;font-size:12px;font-weight:600;margin-bottom:14px;}
+.status-bar.testing{background:#FFFBEB;border:1px solid #FDE68A;color:#92400E;}
+.status-bar.success{background:#F0FFF4;border:1px solid #DCFCE7;color:#15803D;}
+.status-bar.error{background:#FEF2F2;border:1px solid #FECACA;color:#B91C1C;}
+.spinner{width:14px;height:14px;border:2px solid rgba(0,0,0,0.1);border-top-color:#F59E0B;border-radius:50%;animation:spin 0.8s linear infinite;flex-shrink:0;}
+@keyframes spin{to{transform:rotate(360deg);}}
+
+/* BTN */
+.btn{padding:9px 18px;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer;border:none;font-family:'Inter',sans-serif;}
+.btn-primary{background:var(--orange);color:#fff;}
+.btn-google{background:var(--google);color:#fff;display:flex;align-items:center;gap:8px;justify-content:center;width:100%;}
+.btn-outline{background:#fff;color:var(--navy);border:1.5px solid var(--border);}
+.btn-success{background:var(--green);color:#fff;}
+
+/* TABS (for flow steps) */
+.flow-tabs{display:flex;background:var(--light);border-radius:10px;padding:4px;gap:2px;margin-bottom:18px;}
+.flow-tab{flex:1;padding:7px;border-radius:7px;font-size:11px;font-weight:600;cursor:pointer;border:none;background:transparent;color:var(--mid);font-family:'Inter',sans-serif;transition:all 0.2s;text-align:center;}
+.flow-tab.active{background:#fff;color:var(--navy);box-shadow:0 1px 4px rgba(0,0,0,0.08);}
+.flow-tab.done{color:var(--green);}
+.tab-pane{display:none;}
+.tab-pane.active{display:block;}
+
+/* DATA STORED BOX */
+.data-stored{background:#F8FAFC;border:1px solid var(--border);border-radius:8px;padding:12px;margin-top:10px;}
+.data-stored h4{font-size:10px;font-weight:700;color:var(--mid);text-transform:uppercase;letter-spacing:0.8px;margin-bottom:8px;}
+.data-row{display:flex;justify-content:space-between;padding:4px 0;border-bottom:1px solid #F0F4F8;font-size:11px;}
+.data-row:last-child{border-bottom:none;}
+.data-row .dk{color:var(--mid);font-weight:600;}
+.data-row .dv{color:var(--navy);font-family:monospace;font-size:10px;}
+</style>
+</head>
+<body>
+
+<!-- TOP NAV -->
+<div class="topnav">
+  <div class="topnav-brand">Rank<span>Pilot</span></div>
+  <span class="topnav-label">Integration:</span>
+  <button class="active" onclick="show('gsc',this)">🔍 Google Search Console</button>
+  <button onclick="show('gbp',this)">📍 Google Business Profile</button>
+  <button onclick="show('wp',this)">🌐 WordPress</button>
+  <button onclick="show('ga4',this)">📊 Google Analytics 4</button>
+</div>
+
+<!-- ══════════════════════════════════════════════════════════
+     INTEGRATION 1 — GOOGLE SEARCH CONSOLE
+══════════════════════════════════════════════════════════ -->
+<div class="screen active" id="gsc">
+<div class="split">
+<div class="mockup-col">
+<div class="flow-wrap">
+
+  <div class="flow-title">
+    <div class="badge" style="background:var(--google);">GSC</div>
+    Google Search Console — Connection Flow
+  </div>
+
+  <!-- Step tabs -->
+  <div class="flow-tabs">
+    <button class="flow-tab active" onclick="showTab('gsc','t1',this)">Step 1 · Info screen</button>
+    <button class="flow-tab" onclick="showTab('gsc','t2',this)">Step 2 · Google sign-in</button>
+    <button class="flow-tab" onclick="showTab('gsc','t3',this)">Step 3 · Select property</button>
+    <button class="flow-tab" onclick="showTab('gsc','t4',this)">Step 4 · Connected ✓</button>
+  </div>
+
+  <!-- STEP 1 -->
+  <div class="tab-pane active" id="gsc-t1">
+    <div class="mock-card">
+      <div class="mock-card-head">
+        <div class="icon" style="background:#E8F0FE;">🔍</div>
+        <div><h3>Connect Google Search Console</h3><p>Unlocks: actual keyword click data, impression counts, rank positions per URL</p></div>
+      </div>
+      <div class="mock-card-body">
+
+        <div style="background:#EEF4FF;border-radius:8px;padding:14px;margin-bottom:16px;border:1px solid #C7D7FD;">
+          <div style="font-size:12px;font-weight:700;color:#3730A3;margin-bottom:8px;">📋 What is Google Search Console?</div>
+          <p style="font-size:12px;color:#4338CA;line-height:1.7;margin:0;">Google Search Console is a free Google tool that tells you exactly which words people typed into Google to find your website, how many times your site appeared in search results, and how many people actually clicked through. RankPilot uses this data to show you your true keyword performance.</p>
+        </div>
+
+        <div style="margin-bottom:16px;">
+          <div style="font-size:11px;font-weight:700;color:var(--mid);text-transform:uppercase;letter-spacing:0.8px;margin-bottom:10px;">What RankPilot will access:</div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
+            <div style="background:#F0FFF4;border:1px solid #DCFCE7;border-radius:8px;padding:10px;">
+              <div style="font-size:11px;font-weight:700;color:#15803D;margin-bottom:4px;">✅ We READ:</div>
+              <div style="font-size:11px;color:var(--mid);line-height:1.8;">• Keywords people searched<br>• How often site appeared<br>• How many clicks each keyword got<br>• Average rank position per keyword<br>• Which pages rank for which keywords</div>
+            </div>
+            <div style="background:#FEF2F2;border:1px solid #FECACA;border-radius:8px;padding:10px;">
+              <div style="font-size:11px;font-weight:700;color:#B91C1C;margin-bottom:4px;">❌ We NEVER:</div>
+              <div style="font-size:11px;color:var(--mid);line-height:1.8;">• Change your website settings<br>• Delete anything from GSC<br>• Access your Google Ads<br>• See your Google passwords<br>• Share your data with anyone</div>
+            </div>
+          </div>
+        </div>
+
+        <div style="background:#FFFBEB;border:1px solid #FDE68A;border-radius:8px;padding:10px;margin-bottom:16px;">
+          <div style="font-size:11px;color:#92400E;">⚡ <strong>Don't have GSC set up yet?</strong> You need to add your website to Google Search Console first. It's free — go to <strong>search.google.com/search-console</strong>, sign in with your Google account, and add your website URL.</div>
+        </div>
+
+        <button class="btn btn-google" onclick="nextGscTab()">
+          <svg width="16" height="16" viewBox="0 0 24 24"><path fill="#fff" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/><path fill="#fff" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/><path fill="#fff" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"/><path fill="#fff" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/></svg>
+          Sign in with Google to Connect Search Console
+        </button>
+        <p style="font-size:10px;color:var(--lt);text-align:center;margin-top:8px;">You'll be redirected to Google's secure sign-in page. RankPilot never sees your Google password.</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- STEP 2: Google OAuth Popup -->
+  <div class="tab-pane" id="gsc-t2">
+    <p style="font-size:11px;color:var(--mid);margin-bottom:12px;text-align:center;">👆 User clicks "Sign in with Google" → Browser opens this Google popup (or redirect):</p>
+    <div class="google-popup">
+      <div class="google-popup-head">
+        <div class="g-logo"><span>G</span><span>o</span><span>o</span><span>g</span><span>l</span><span>e</span></div>
+        <h4>Sign in with Google</h4>
+        <p>to continue to RankPilot</p>
+        <div style="margin-top:12px;background:#f1f3f4;border-radius:20px;padding:6px 12px;display:flex;align-items:center;gap:8px;">
+          <div style="width:28px;height:28px;border-radius:50%;background:#4285F4;color:#fff;font-size:12px;font-weight:700;display:flex;align-items:center;justify-content:center;">J</div>
+          <div style="text-align:left;"><div style="font-size:12px;font-weight:600;color:#202124;">John Smith</div><div style="font-size:10px;color:#5f6368;">john@sydneyplumber.com.au</div></div>
+        </div>
+      </div>
+      <div class="google-popup-body">
+        <div style="font-size:12px;font-weight:600;color:#202124;margin-bottom:10px;">RankPilot wants to access your Google Account</div>
+        <div class="permission-item">
+          <div class="picon">📊</div>
+          <div class="ptext"><strong>View Search Console data for your sites</strong>See your website's search performance data including keywords, clicks, and impressions</div>
+        </div>
+        <div class="permission-item">
+          <div class="picon">🌐</div>
+          <div class="ptext"><strong>View your website's Search Console sites list</strong>See which websites are registered in your Search Console account</div>
+        </div>
+      </div>
+      <div class="google-popup-foot">
+        <button class="g-btn g-btn-cancel">Cancel</button>
+        <button class="g-btn g-btn-allow" onclick="nextGscTab()">Allow</button>
+      </div>
+    </div>
+    <p style="font-size:10px;color:var(--lt);text-align:center;margin-top:10px;">After clicking Allow → Google redirects back to RankPilot with an authorization code in the URL</p>
+  </div>
+
+  <!-- STEP 3: Select Property -->
+  <div class="tab-pane" id="gsc-t3">
+    <div class="mock-card">
+      <div class="mock-card-head">
+        <div class="icon" style="background:#E8F0FE;">🔍</div>
+        <div><h3>Select your website in Search Console</h3><p>We found 3 sites in your Google Search Console account. Select the one for this business:</p></div>
+      </div>
+      <div class="mock-card-body">
+        <div style="font-size:11px;color:var(--lt);margin-bottom:10px;">Google Search Console Properties found in your account:</div>
+        <div class="property-list">
+          <div class="property-item selected">
+            <div class="radio" style="border-color:#4285F4;background:#4285F4;"></div>
+            <div>
+              <div class="prop-name">https://sydneyplumber.com.au/</div>
+              <div class="prop-url">Domain property · 890 clicks/month · 12,400 impressions</div>
+            </div>
+          </div>
+          <div class="property-item">
+            <div class="radio"></div>
+            <div>
+              <div class="prop-name">sc-domain:sydneyplumber.com.au</div>
+              <div class="prop-url">Domain property · Same website, different format</div>
+            </div>
+          </div>
+          <div class="property-item">
+            <div class="prop-name" style="color:var(--lt);font-size:11px;">+ No more properties found</div>
+          </div>
+        </div>
+        <div style="margin-top:14px;padding:10px;background:#EEF4FF;border-radius:8px;border:1px solid #C7D7FD;font-size:11px;color:#3730A3;">
+          💡 <strong>Tip:</strong> If you don't see your website here, it means it hasn't been added to Google Search Console yet. You need to verify ownership of your site in GSC first.
+        </div>
+        <button class="btn btn-primary" style="width:100%;margin-top:14px;" onclick="nextGscTab()">Confirm Selection → Connect</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- STEP 4: Success -->
+  <div class="tab-pane" id="gsc-t4">
+    <div class="success-card">
+      <div class="success-icon">✅</div>
+      <h3>Google Search Console Connected!</h3>
+      <p>RankPilot is now pulling your real keyword performance data. Your monthly reports will now show actual click counts and impressions instead of estimates.</p>
+      <div class="success-details">
+        <div class="detail-item"><div class="dlabel">Property Connected</div><div class="dval">sydneyplumber.com.au</div></div>
+        <div class="detail-item"><div class="dlabel">Data Access</div><div class="dval">Read-only ✓</div></div>
+        <div class="detail-item"><div class="dlabel">Keywords Found</div><div class="dval">147 keywords tracked</div></div>
+        <div class="detail-item"><div class="dlabel">Historical Data</div><div class="dval">16 months imported</div></div>
+        <div class="detail-item"><div class="dlabel">Auto-refresh</div><div class="dval">Every Monday 2am AEST</div></div>
+        <div class="detail-item"><div class="dlabel">Token Expiry</div><div class="dval">Auto-renewed ✓</div></div>
+      </div>
+    </div>
+    <div style="margin-top:14px;display:flex;gap:10px;justify-content:flex-end;">
+      <button class="btn btn-outline">← Back to Connect Accounts</button>
+      <button class="btn btn-success">Continue to Dashboard →</button>
+    </div>
+  </div>
+
+</div>
+</div><!-- end mockup-col -->
+
+<!-- DEV NOTES: GSC -->
+<div class="devnotes">
+<h2>🛠 Developer Guide — Google Search Console</h2>
+
+<div class="term-box"><div class="term">What is OAuth 2.0?</div><p>OAuth 2.0 is a secure way to let a user give RankPilot permission to access their Google data WITHOUT ever sharing their Google password. The user logs into Google directly (on Google's servers), approves specific permissions, and Google gives RankPilot a special "access token" — like a temporary key.</p></div>
+
+<h3>Step 1 → Step 2: Initiate OAuth Flow</h3>
+<div class="step-row"><span class="step-num">1</span><div><strong>When user clicks "Sign in with Google"</strong><p>Redirect the user's browser to this Google URL (build it on your backend, not frontend — client_secret must stay server-side):</p></div></div>
+<pre>const authUrl = new URL('https://accounts.google.com/o/oauth2/v2/auth');
+authUrl.searchParams.set('client_id', GOOGLE_CLIENT_ID);
+authUrl.searchParams.set('redirect_uri', 
+  'https://app.rankpilot.com.au/api/auth/gsc/callback');
+authUrl.searchParams.set('response_type', 'code');
+authUrl.searchParams.set('scope', [
+  'https://www.googleapis.com/auth/webmasters.readonly',
+  // webmasters = Search Console API scope
+].join(' '));
+authUrl.searchParams.set('access_type', 'offline');
+// 'offline' = get refresh_token (stays logged in forever)
+authUrl.searchParams.set('state', clientId); 
+// state = your internal client ID for security
+
+res.redirect(authUrl.toString());</pre>
+
+<h3>Step 2 → Step 3: Handle Google's Callback</h3>
+<div class="step-row"><span class="step-num">2</span><div><strong>Google redirects back to your callback URL with a code</strong><p>URL will look like: <code>https://app.rankpilot.com.au/api/auth/gsc/callback?code=4/ABC123&state=client-uuid</code></p></div></div>
+<pre>// In your Next.js API route:
+// GET /api/auth/gsc/callback
+
+const { code, state: clientId } = req.query;
+
+// Exchange code for tokens:
+const tokenRes = await fetch('https://oauth2.googleapis.com/token', {
+  method: 'POST',
+  body: new URLSearchParams({
+    code,
+    client_id: GOOGLE_CLIENT_ID,
+    client_secret: GOOGLE_CLIENT_SECRET,
+    redirect_uri: 'https://app.rankpilot.com.au/api/auth/gsc/callback',
+    grant_type: 'authorization_code'
+  })
+});
+
+const tokens = await tokenRes.json();
+// tokens = {
+//   access_token: "ya29.abc...",   ← expires in 1 hour
+//   refresh_token: "1//xyz...",    ← never expires, store this!
+//   expires_in: 3600
+// }</pre>
+
+<h3>Step 3: List GSC Properties</h3>
+<div class="step-row"><span class="step-num">3</span><div><strong>Use the access_token to fetch the user's GSC sites</strong><p>Show them a list to select which website to connect.</p></div></div>
+<pre>GET https://www.googleapis.com/webmasters/v3/sites
+Headers:
+  Authorization: Bearer {access_token}
+
+→ Returns: {
+  "siteEntry": [{
+    "siteUrl": "https://sydneyplumber.com.au/",
+    "permissionLevel": "siteOwner"
+  }, ...]
+}</pre>
+
+<h3>Step 4: Store Tokens in DB</h3>
+<div class="step-row"><span class="step-num">4</span><div><strong>NEVER store in plain text — encrypt first</strong><p>Use AES-256-GCM encryption before storing in Supabase.</p></div></div>
+<span class="db-pill">client_integrations</span>
+<pre>// Encrypt the tokens before storing:
+const encryptedAccess = encrypt(tokens.access_token);
+const encryptedRefresh = encrypt(tokens.refresh_token);
+
+await supabase.from('client_integrations').upsert({
+  client_id: clientId,
+  type: 'gsc',
+  property_url: selectedSiteUrl,
+  access_token: encryptedAccess,
+  refresh_token: encryptedRefresh,
+  token_expires_at: new Date(Date.now() + 3600_000),
+  connected_at: new Date().toISOString()
+});</pre>
+
+<h3>How to Auto-Refresh Expired Tokens</h3>
+<p>Access tokens expire every hour. Before any GSC API call, check if the token has expired. If so, use the refresh_token to get a new access_token automatically — no user action needed.</p>
+<pre>async function getGscAccessToken(clientId) {
+  const integration = await getIntegration(clientId, 'gsc');
+  
+  // Check if access token still valid
+  if (integration.token_expires_at > new Date()) {
+    return decrypt(integration.access_token);
+  }
+  
+  // Token expired — refresh it:
+  const res = await fetch('https://oauth2.googleapis.com/token', {
+    method: 'POST',
+    body: new URLSearchParams({
+      refresh_token: decrypt(integration.refresh_token),
+      client_id: GOOGLE_CLIENT_ID,
+      client_secret: GOOGLE_CLIENT_SECRET,
+      grant_type: 'refresh_token'
+    })
+  });
+  const newTokens = await res.json();
+  
+  // Update stored token
+  await updateToken(clientId, 'gsc', newTokens);
+  return newTokens.access_token;
+}</pre>
+
+<h3>What Data to Pull from GSC</h3>
+<pre>POST https://searchconsole.googleapis.com/webmasters/v3/
+  sites/{siteUrl}/searchAnalytics/query
+Headers: Authorization: Bearer {access_token}
+
+{
+  "startDate": "2026-03-01",
+  "endDate": "2026-04-01",
+  "dimensions": ["query", "page"],
+  "rowLimit": 500
+}
+
+→ Returns rows like:
+{
+  "keys": ["plumber parramatta", "https://site.com/plumber"],
+  "clicks": 42,
+  "impressions": 890,
+  "ctr": 0.047,
+  "position": 3.2
+}</pre>
+
+<div class="warn-box"><p>⚠️ Set up your Google Cloud project first: go to console.cloud.google.com → Enable "Google Search Console API" → Create OAuth 2.0 credentials → Add your callback URL to the "Authorised redirect URIs" list.</p></div>
+</div>
+</div>
+</div><!-- /gsc screen -->
+
+<!-- ══════════════════════════════════════════════════════════
+     INTEGRATION 2 — GOOGLE BUSINESS PROFILE
+══════════════════════════════════════════════════════════ -->
+<div class="screen" id="gbp">
+<div class="split">
+<div class="mockup-col">
+<div class="flow-wrap">
+
+  <div class="flow-title">
+    <div class="badge" style="background:#34A853;">GBP</div>
+    Google Business Profile — Connection Flow
+  </div>
+
+  <div class="flow-tabs">
+    <button class="flow-tab active" onclick="showTab('gbp','t1',this)">Step 1 · Info + permissions</button>
+    <button class="flow-tab" onclick="showTab('gbp','t2',this)">Step 2 · Google sign-in</button>
+    <button class="flow-tab" onclick="showTab('gbp','t3',this)">Step 3 · Select location</button>
+    <button class="flow-tab" onclick="showTab('gbp','t4',this)">Step 4 · Connected ✓</button>
+  </div>
+
+  <!-- STEP 1 -->
+  <div class="tab-pane active" id="gbp-t1">
+    <div class="mock-card">
+      <div class="mock-card-head">
+        <div class="icon" style="background:#E6F4EA;">📍</div>
+        <div><h3>Connect Google Business Profile</h3><p>Unlocks: Auto-posting, GBP optimisation, review management, Q&A automation</p></div>
+      </div>
+      <div class="mock-card-body">
+
+        <div style="background:#E6F4EA;border-radius:8px;padding:14px;margin-bottom:16px;border:1px solid #CEEAD6;">
+          <div style="font-size:12px;font-weight:700;color:#137333;margin-bottom:8px;">📍 What is Google Business Profile?</div>
+          <p style="font-size:12px;color:#1E6B37;line-height:1.7;margin:0;">Your Google Business Profile is your business listing on Google Maps. When someone searches "plumber near me", the businesses that appear on the map with their name, hours, reviews and photos — those are Google Business Profiles. This connection lets RankPilot automatically post updates, respond to reviews, answer questions, and fix your listing details every week.</p>
+        </div>
+
+        <div style="margin-bottom:16px;">
+          <div style="font-size:11px;font-weight:700;color:var(--mid);text-transform:uppercase;letter-spacing:0.8px;margin-bottom:10px;">RankPilot needs READ + WRITE access:</div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
+            <div style="background:#F0FFF4;border:1px solid #DCFCE7;border-radius:8px;padding:10px;">
+              <div style="font-size:11px;font-weight:700;color:#15803D;margin-bottom:4px;">✅ READ — used for:</div>
+              <div style="font-size:11px;color:var(--mid);line-height:1.8;">• GBP listing health check<br>• Review monitoring<br>• Q&A monitoring<br>• Post history<br>• Category check</div>
+            </div>
+            <div style="background:#EEF4FF;border:1px solid #C7D7FD;border-radius:8px;padding:10px;">
+              <div style="font-size:11px;font-weight:700;color:#1D4ED8;margin-bottom:4px;">✍️ WRITE — used for:</div>
+              <div style="font-size:11px;color:var(--mid);line-height:1.8;">• Weekly posts (auto-publish)<br>• Review responses<br>• Q&A answers<br>• Category updates<br>• Business description</div>
+            </div>
+          </div>
+        </div>
+
+        <div style="background:#FFF7ED;border:1px solid #FED7AA;border-radius:8px;padding:10px;margin-bottom:16px;">
+          <div style="font-size:11px;color:#92400E;">⚠️ <strong>Important:</strong> You must sign in with the Google account that is listed as <strong>Owner</strong> or <strong>Manager</strong> of your Google Business Profile. If you're not sure, go to business.google.com to check which Google account controls your listing.</div>
+        </div>
+
+        <button class="btn btn-google" onclick="nextGbpTab()">
+          <svg width="16" height="16" viewBox="0 0 24 24"><path fill="#fff" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/><path fill="#fff" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/><path fill="#fff" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"/><path fill="#fff" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/></svg>
+          Sign in with Google to Connect Business Profile
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- STEP 2: OAuth -->
+  <div class="tab-pane" id="gbp-t2">
+    <p style="font-size:11px;color:var(--mid);margin-bottom:12px;text-align:center;">Google OAuth consent screen — note the GBP-specific permissions:</p>
+    <div class="google-popup">
+      <div class="google-popup-head">
+        <div class="g-logo"><span>G</span><span>o</span><span>o</span><span>g</span><span>l</span><span>e</span></div>
+        <h4>Sign in with Google</h4>
+        <p>to continue to RankPilot</p>
+        <div style="margin-top:12px;background:#f1f3f4;border-radius:20px;padding:6px 12px;display:flex;align-items:center;gap:8px;">
+          <div style="width:28px;height:28px;border-radius:50%;background:#34A853;color:#fff;font-size:12px;font-weight:700;display:flex;align-items:center;justify-content:center;">J</div>
+          <div style="text-align:left;"><div style="font-size:12px;font-weight:600;color:#202124;">John Smith</div><div style="font-size:10px;color:#5f6368;">john@sydneyplumber.com.au</div></div>
+        </div>
+      </div>
+      <div class="google-popup-body">
+        <div style="font-size:12px;font-weight:600;color:#202124;margin-bottom:10px;">RankPilot wants to access your Google Account</div>
+        <div class="permission-item">
+          <div class="picon">📍</div>
+          <div class="ptext"><strong>Manage your Business Profile</strong>View and manage information about your Google Business Profile listing</div>
+        </div>
+        <div class="permission-item">
+          <div class="picon">⭐</div>
+          <div class="ptext"><strong>Respond to reviews on your behalf</strong>Post replies to customer reviews on your Business Profile</div>
+        </div>
+        <div class="permission-item">
+          <div class="picon">📝</div>
+          <div class="ptext"><strong>Create and manage posts</strong>Publish posts and updates to your Business Profile</div>
+        </div>
+      </div>
+      <div class="google-popup-foot">
+        <button class="g-btn g-btn-cancel">Cancel</button>
+        <button class="g-btn g-btn-allow" onclick="nextGbpTab()">Allow</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- STEP 3: Select Location -->
+  <div class="tab-pane" id="gbp-t3">
+    <div class="mock-card">
+      <div class="mock-card-head">
+        <div class="icon" style="background:#E6F4EA;">📍</div>
+        <div><h3>Select your business location</h3><p>We found these locations managed by your Google account. Select the one for this business:</p></div>
+      </div>
+      <div class="mock-card-body">
+        <div style="font-size:11px;color:var(--lt);margin-bottom:10px;">Google Business Profile locations found in your account:</div>
+        <div class="property-list">
+          <div class="property-item selected">
+            <div class="radio" style="border-color:#34A853;background:#34A853;"></div>
+            <div>
+              <div class="prop-name">Sydney Plumber Co</div>
+              <div class="prop-url">14 Station St, Parramatta NSW 2150 · ⭐ 4.7 (47 reviews)</div>
+            </div>
+          </div>
+          <div class="property-item">
+            <div class="radio"></div>
+            <div>
+              <div class="prop-name">Sydney Plumber Co — Parramatta Workshop</div>
+              <div class="prop-url">32 Industrial Dr, Parramatta NSW 2150 · Service area business</div>
+            </div>
+          </div>
+        </div>
+        <div style="background:#EEF4FF;border-radius:8px;padding:10px;margin-top:12px;border:1px solid #C7D7FD;font-size:11px;color:#3730A3;">
+          💡 Only select the location that matches the business website you connected. If you have multiple locations, you can connect additional ones later in Settings.
+        </div>
+        <button class="btn btn-primary" style="width:100%;margin-top:14px;background:#34A853;" onclick="nextGbpTab()">Connect this Location →</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- STEP 4: Success -->
+  <div class="tab-pane" id="gbp-t4">
+    <div class="success-card">
+      <div class="success-icon">✅</div>
+      <h3>Google Business Profile Connected!</h3>
+      <p>RankPilot will now automatically post to your GBP every week, respond to reviews, and fix your listing health — all without you lifting a finger.</p>
+      <div class="success-details">
+        <div class="detail-item"><div class="dlabel">Business Connected</div><div class="dval">Sydney Plumber Co</div></div>
+        <div class="detail-item"><div class="dlabel">Access Level</div><div class="dval">Read + Write ✓</div></div>
+        <div class="detail-item"><div class="dlabel">Current Health Score</div><div class="dval">41/100 (fixing...)</div></div>
+        <div class="detail-item"><div class="dlabel">First Post Scheduled</div><div class="dval">Monday 9am AEST</div></div>
+        <div class="detail-item"><div class="dlabel">Review Monitoring</div><div class="dval">Active — 47 reviews found</div></div>
+        <div class="detail-item"><div class="dlabel">Q&A Monitoring</div><div class="dval">Active — 2 unanswered found</div></div>
+      </div>
+    </div>
+  </div>
+
+</div>
+</div>
+
+<div class="devnotes">
+<h2>🛠 Developer Guide — Google Business Profile</h2>
+
+<div class="term-box"><div class="term">GBP API vs DataforSEO</div><p>For READING GBP data (reviews, categories, info), you can use DataforSEO WITHOUT any OAuth — DataforSEO reads public Google data. For WRITING to GBP (posting, responding, updating), you MUST have OAuth tokens from the business owner. Writing requires proving you own the listing.</p></div>
+
+<h3>OAuth Scopes for GBP</h3>
+<pre>const scope = [
+  'https://www.googleapis.com/auth/business.manage',
+  // This single scope covers all GBP operations:
+  // - Read listing info
+  // - Create/edit posts
+  // - Respond to reviews
+  // - Answer Q&As
+  // - Update categories, description, hours
+].join(' ');</pre>
+
+<h3>GBP API — Key Endpoints</h3>
+<span class="api-pill">Google My Business API v4</span>
+<p>All URLs use base: <code>https://mybusiness.googleapis.com/v4/</code></p>
+<pre>// 1. List all locations (accounts + locations):
+GET /accounts
+→ { accounts: [{ name: "accounts/123", accountName: "..." }] }
+
+GET /accounts/{accountId}/locations
+→ { locations: [{ name: "accounts/123/locations/456",
+                   locationName: "Sydney Plumber Co",
+                   address: {...}, primaryPhone: "..." }] }
+
+// 2. Publish a GBP post:
+POST /accounts/{id}/locations/{id}/localPosts
+{ "languageCode": "en",
+  "summary": "Post content here...",
+  "topicType": "STANDARD",
+  "callToAction": { "actionType": "CALL", "url": "tel:..." } }
+
+// 3. Reply to a review:
+PUT /accounts/{id}/locations/{id}/reviews/{reviewId}/reply
+{ "comment": "Thank you for the review..." }
+
+// 4. Answer a Q&A:
+POST /accounts/{id}/locations/{id}/questions/{questionId}/answers
+{ "text": "Yes, we are open 7 days..." }</pre>
+
+<h3>Store GBP Location ID</h3>
+<span class="db-pill">client_integrations</span>
+<pre>// After user selects their location:
+await supabase.from('client_integrations').upsert({
+  client_id: clientId,
+  type: 'gbp',
+  account_id: selectedAccount,   // "accounts/123"
+  location_id: selectedLocation, // "accounts/123/locations/456"
+  location_name: "Sydney Plumber Co",
+  access_token: encrypt(tokens.access_token),
+  refresh_token: encrypt(tokens.refresh_token),
+  token_expires_at: ...,
+  connected_at: new Date().toISOString()
+});</pre>
+
+<div class="warn-box"><p>⚠️ The Google My Business API requires your app to be verified by Google before you can use it in production. Apply for verification at: console.cloud.google.com → APIs → My Business Business Information API. Approval typically takes 1-2 weeks. In development, you can test with a test Google account without verification.</p></div>
+
+<h3>Scheduling Weekly Posts</h3>
+<pre>-- pg_cron: every Sunday 7pm AEST (Sunday 9am UTC)
+SELECT cron.schedule('gbp-weekly-post', '0 9 * * SUN',
+  $$
+  SELECT generate_and_post_gbp_for_all_clients();
+  $$
+);
+
+-- The function:
+-- 1. For each client with GBP connected:
+-- 2. Call Claude to generate a post
+-- 3. Call GBP API to publish it
+-- 4. Insert row into activity_log</pre>
+</div>
+</div>
+</div><!-- /gbp screen -->
+
+<!-- ══════════════════════════════════════════════════════════
+     INTEGRATION 3 — WORDPRESS
+══════════════════════════════════════════════════════════ -->
+<div class="screen" id="wp">
+<div class="split">
+<div class="mockup-col">
+<div class="flow-wrap">
+
+  <div class="flow-title">
+    <div class="badge" style="background:#21759B;">WP</div>
+    WordPress Website — Connection Flow
+  </div>
+
+  <div class="flow-tabs">
+    <button class="flow-tab active" onclick="showTab('wp','t1',this)">Step 1 · Enter site URL</button>
+    <button class="flow-tab" onclick="showTab('wp','t2',this)">Step 2 · Create App Password</button>
+    <button class="flow-tab" onclick="showTab('wp','t3',this)">Step 3 · Enter credentials</button>
+    <button class="flow-tab" onclick="showTab('wp','t4',this)">Step 4 · Testing...</button>
+    <button class="flow-tab" onclick="showTab('wp','t5',this)">Step 5 · Connected ✓</button>
+  </div>
+
+  <!-- STEP 1 -->
+  <div class="tab-pane active" id="wp-t1">
+    <div class="mock-card">
+      <div class="mock-card-head">
+        <div class="icon" style="background:#E0F2FE;">🌐</div>
+        <div><h3>Connect your WordPress Website</h3><p>Unlocks: Automatic suburb page publishing, schema injection, content updates</p></div>
+      </div>
+      <div class="mock-card-body">
+        <div style="background:#E0F2FE;border-radius:8px;padding:14px;margin-bottom:16px;border:1px solid #BAE6FD;">
+          <div style="font-size:12px;font-weight:700;color:#0369A1;margin-bottom:8px;">🌐 What is WordPress REST API?</div>
+          <p style="font-size:12px;color:#0C4A6E;line-height:1.7;margin:0;">WordPress websites have a built-in feature called the REST API that allows approved applications to create and update pages automatically. RankPilot uses this to publish suburb pages directly to your website without you needing to log into WordPress manually. It's like giving RankPilot a key to your website's back door — but a key that only works for creating content, nothing else.</p>
+        </div>
+
+        <div class="form-group">
+          <label>Your WordPress Website URL</label>
+          <input type="url" value="https://sydneyplumber.com.au" placeholder="https://yourwebsite.com.au"/>
+          <div class="input-hint">Enter your website address exactly as it appears in your browser. Must start with https://</div>
+        </div>
+
+        <div style="background:#F0FFF4;border:1px solid #DCFCE7;border-radius:8px;padding:10px;margin-bottom:14px;">
+          <div style="font-size:11px;color:#15803D;">✅ <strong>No OAuth needed for WordPress!</strong> Instead of complex Google sign-in, WordPress uses a simpler system called "Application Passwords". We'll walk you through creating one in the next step — it takes about 2 minutes.</div>
+        </div>
+
+        <button class="btn btn-primary" style="width:100%;" onclick="nextWpTab()">Continue → Create Application Password</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- STEP 2: How to create App Password (instructions) -->
+  <div class="tab-pane" id="wp-t2">
+    <div class="mock-card">
+      <div class="mock-card-head">
+        <div class="icon" style="background:#E0F2FE;">🔐</div>
+        <div><h3>Create a WordPress Application Password</h3><p>Follow these steps in your WordPress admin panel. This takes about 2 minutes.</p></div>
+      </div>
+      <div class="mock-card-body">
+
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;">
+
+          <!-- Instructions (left) -->
+          <div>
+            <div style="font-size:11px;font-weight:700;color:var(--mid);text-transform:uppercase;letter-spacing:0.8px;margin-bottom:10px;">Instructions:</div>
+
+            <div class="wp-step">
+              <div class="wp-step-num">1</div>
+              <div class="wp-step-body">
+                <strong>Log into your WordPress admin</strong>
+                <p>Go to <span class="path">sydneyplumber.com.au/wp-admin</span> and sign in with your WordPress username and password.</p>
+              </div>
+            </div>
+
+            <div class="wp-step">
+              <div class="wp-step-num">2</div>
+              <div class="wp-step-body">
+                <strong>Go to your Profile settings</strong>
+                <p>In the left menu, click <span class="path">Users</span> → <span class="path">Profile</span> (or click your name in the top-right corner)</p>
+              </div>
+            </div>
+
+            <div class="wp-step">
+              <div class="wp-step-num">3</div>
+              <div class="wp-step-body">
+                <strong>Scroll to "Application Passwords"</strong>
+                <p>Scroll all the way down to the bottom of the page. You'll find a section titled "Application Passwords".</p>
+              </div>
+            </div>
+
+            <div class="wp-step">
+              <div class="wp-step-num">4</div>
+              <div class="wp-step-body">
+                <strong>Type "RankPilot" in the Name field</strong>
+                <p>In the "New Application Password Name" box, type <strong>RankPilot</strong>, then click the <strong>"Add New Application Password"</strong> button.</p>
+              </div>
+            </div>
+
+            <div class="wp-step" style="background:#FFF9F0;border-color:#FDE68A;">
+              <div class="wp-step-num" style="background:#F59E0B;">5</div>
+              <div class="wp-step-body">
+                <strong>⚠️ COPY the generated password NOW</strong>
+                <p>WordPress will show a password like: <strong style="font-family:monospace;background:#E0E6EF;padding:1px 4px;border-radius:3px;">xB3k aMqP 7nYd vW2j kR9f hZ4t</strong><br>Copy it immediately — it will NEVER be shown again.</p>
+              </div>
+            </div>
+          </div>
+
+          <!-- Visual mockup of WP admin (right) -->
+          <div>
+            <div style="font-size:11px;font-weight:700;color:var(--mid);text-transform:uppercase;letter-spacing:0.8px;margin-bottom:10px;">What it looks like in WordPress:</div>
+            <div style="background:#fff;border:1px solid var(--border);border-radius:8px;overflow:hidden;font-size:11px;">
+              <!-- WP admin top bar -->
+              <div style="background:#1d2327;padding:6px 12px;display:flex;gap:8px;align-items:center;">
+                <div style="width:18px;height:18px;background:#3858e9;border-radius:3px;display:flex;align-items:center;justify-content:center;color:#fff;font-size:10px;font-weight:700;">W</div>
+                <span style="color:#aaa;font-size:10px;">Sydney Plumber Co ▾</span>
+                <span style="color:#aaa;font-size:10px;margin-left:auto;">Howdy, John ▾</span>
+              </div>
+              <!-- WP content area -->
+              <div style="display:flex;">
+                <div style="background:#1d2327;width:70px;padding:10px 0;min-height:200px;">
+                  <div style="text-align:center;padding:6px;font-size:9px;color:#aaa;">👥 Users</div>
+                  <div style="text-align:center;padding:6px;font-size:9px;color:#72aee6;background:rgba(255,255,255,0.05);">Profile</div>
+                </div>
+                <div style="flex:1;padding:12px;">
+                  <div style="font-size:12px;font-weight:700;color:#1d2327;margin-bottom:10px;">Profile</div>
+                  <div style="font-size:10px;color:#646970;padding:8px;background:#f6f7f7;border:1px solid #dcdcde;border-radius:4px;margin-bottom:8px;">
+                    <div style="font-weight:700;margin-bottom:6px;">Application Passwords</div>
+                    <div style="display:flex;gap:6px;margin-bottom:6px;">
+                      <input style="flex:1;border:1px solid #8c8f94;border-radius:3px;padding:4px 8px;font-size:10px;" value="RankPilot" readonly/>
+                      <button style="background:#2271b1;color:#fff;border:none;border-radius:3px;padding:4px 8px;font-size:10px;cursor:pointer;">Add New</button>
+                    </div>
+                    <div style="background:#d1e4dd;border:1px solid #68de7c;border-radius:3px;padding:6px 8px;font-size:10px;color:#0a3622;">
+                      <strong>Your new password for RankPilot is:</strong><br>
+                      <strong style="font-family:monospace;font-size:12px;letter-spacing:1px;">xB3k aMqP 7nYd vW2j kR9f hZ4t</strong><br>
+                      <span style="color:#B91C1C;font-weight:600;">⚠ Save this now — it won't be shown again!</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <button class="btn btn-primary" style="width:100%;margin-top:16px;" onclick="nextWpTab()">I've copied the password → Continue</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- STEP 3: Enter credentials -->
+  <div class="tab-pane" id="wp-t3">
+    <div class="mock-card">
+      <div class="mock-card-head">
+        <div class="icon" style="background:#E0F2FE;">🔑</div>
+        <div><h3>Enter your WordPress credentials</h3><p>Paste the Application Password you just copied from WordPress</p></div>
+      </div>
+      <div class="mock-card-body">
+        <div class="form-group">
+          <label>WordPress Site URL</label>
+          <input type="url" value="https://sydneyplumber.com.au" class="valid"/>
+          <div class="input-hint" style="color:var(--green);">✓ Valid WordPress site detected</div>
+        </div>
+
+        <div class="form-group">
+          <label>WordPress Admin Username</label>
+          <input type="text" value="john.smith" placeholder="Your WordPress username (not email)"/>
+          <div class="input-hint">This is the username you use to log into WordPress admin, NOT your email address.</div>
+        </div>
+
+        <div class="form-group">
+          <label>Application Password</label>
+          <input type="text" placeholder="xxxx xxxx xxxx xxxx xxxx xxxx" value="xB3k aMqP 7nYd vW2j kR9f hZ4t"/>
+          <div class="input-hint">The password generated in the previous step. Spaces are OK — include them exactly as shown. This is NOT your WordPress login password.</div>
+        </div>
+
+        <div style="background:#F0FFF4;border:1px solid #DCFCE7;border-radius:8px;padding:10px;margin-bottom:14px;">
+          <div style="font-size:11px;color:#15803D;">🔒 <strong>This is secure.</strong> Application Passwords only grant access to create/edit content in WordPress. They cannot be used to change your WordPress password, delete your site, or access your hosting account.</div>
+        </div>
+
+        <button class="btn btn-primary" style="width:100%;" onclick="nextWpTab()">Test Connection →</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- STEP 4: Testing -->
+  <div class="tab-pane" id="wp-t4">
+    <div class="mock-card">
+      <div class="mock-card-body" style="text-align:center;padding:30px;">
+        <div style="font-size:32px;margin-bottom:14px;">🔄</div>
+        <div style="font-size:16px;font-weight:700;color:var(--navy);margin-bottom:10px;">Testing connection to your WordPress site...</div>
+        <p style="font-size:12px;color:var(--mid);margin-bottom:20px;">This usually takes 5–10 seconds. We're verifying your credentials and checking that RankPilot has the right permissions.</p>
+        <div style="max-width:360px;margin:0 auto;">
+          <div class="status-bar testing"><div class="spinner"></div>Connecting to sydneyplumber.com.au...</div>
+          <div class="status-bar testing"><div class="spinner"></div>Verifying Application Password...</div>
+          <div class="status-bar success">✓ WordPress REST API detected</div>
+          <div class="status-bar success">✓ Write permissions confirmed</div>
+          <div class="status-bar success">✓ Yoast SEO plugin detected (meta tags enabled)</div>
+        </div>
+        <button class="btn btn-success" style="margin-top:20px;" onclick="nextWpTab()">All checks passed → View Connection</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- STEP 5: Success -->
+  <div class="tab-pane" id="wp-t5">
+    <div class="success-card">
+      <div class="success-icon">✅</div>
+      <h3>WordPress Connected!</h3>
+      <p>RankPilot can now automatically publish suburb pages, inject schema markup, and update your SEO metadata directly on your website.</p>
+      <div class="success-details">
+        <div class="detail-item"><div class="dlabel">Site Connected</div><div class="dval">sydneyplumber.com.au</div></div>
+        <div class="detail-item"><div class="dlabel">WordPress Version</div><div class="dval">6.5.2</div></div>
+        <div class="detail-item"><div class="dlabel">Yoast SEO</div><div class="dval">Detected ✓ (meta tags enabled)</div></div>
+        <div class="detail-item"><div class="dlabel">Test Page Published</div><div class="dval">✓ (hidden draft)</div></div>
+        <div class="detail-item"><div class="dlabel">First Suburb Page</div><div class="dval">Generating now...</div></div>
+        <div class="detail-item"><div class="dlabel">Access Level</div><div class="dval">Create / Edit pages ✓</div></div>
+      </div>
+    </div>
+  </div>
+
+</div>
+</div>
+
+<div class="devnotes">
+<h2>🛠 Developer Guide — WordPress REST API</h2>
+
+<div class="term-box"><div class="term">Application Passwords vs OAuth</div><p>WordPress uses its own simpler authentication system called "Application Passwords". These are 24-character passwords that only work for API calls (not for logging into WordPress). They are much simpler than OAuth — no redirects, no callbacks, just store username + password in your database.</p></div>
+
+<h3>Step 1 → 2: Detect WordPress Site</h3>
+<pre>// When user enters their URL, verify it's a WordPress site:
+GET {siteUrl}/wp-json/wp/v2/
+Headers: none needed
+
+→ Returns WordPress REST API info if it's a WP site
+→ Returns 404 if not WordPress or if REST API is disabled
+
+// Check the response contains:
+{ "namespace": "wp/v2", 
+  "routes": { "/wp/v2/pages": {...} } }
+→ Confirm: yes, this is WordPress ✓</pre>
+
+<h3>Step 3: Test the Application Password</h3>
+<pre>// Verify credentials with a simple read request:
+GET {siteUrl}/wp-json/wp/v2/users/me
+Headers:
+  Authorization: Basic base64("username:app_password")
+  // IMPORTANT: base64 encode "username:app_password"
+  // NOT the WordPress login password — the APP password
+
+→ Returns current user info if correct
+→ Returns 401 Unauthorized if wrong credentials
+
+// JavaScript:
+const auth = btoa(`${username}:${appPassword}`);
+const res = await fetch(`${siteUrl}/wp-json/wp/v2/users/me`, {
+  headers: { 'Authorization': `Basic ${auth}` }
+});</pre>
+
+<h3>Check Permissions</h3>
+<pre>// Run these test calls to verify capabilities:
+GET {siteUrl}/wp-json/wp/v2/pages?per_page=1
+// If 200 → can read pages ✓
+
+POST {siteUrl}/wp-json/wp/v2/pages
+{ "title": "RankPilot Test", "status": "draft", 
+  "content": "Connection test - delete this" }
+// If 201 Created → can write pages ✓
+// Save the returned "id" to delete the test page
+
+DELETE {siteUrl}/wp-json/wp/v2/pages/{testId}?force=true
+// Clean up the test draft</pre>
+
+<h3>Check for Yoast SEO Plugin</h3>
+<pre>// Yoast SEO adds extra meta fields to the API
+GET {siteUrl}/wp-json/wp/v2/pages?_fields=yoast_head_json
+// If yoast_head_json appears in response → Yoast detected
+// This means we can set meta title + description via API
+
+// Without Yoast, we inject meta tags into page content HTML directly</pre>
+
+<h3>Store Credentials Securely</h3>
+<span class="db-pill">client_integrations</span>
+<pre>// Encode and store (username + app password):
+const encoded = Buffer.from(`${username}:${appPassword}`)
+  .toString('base64');
+
+await supabase.from('client_integrations').upsert({
+  client_id: clientId,
+  type: 'wordpress',
+  site_url: siteUrl,          -- "https://sydneyplumber.com.au"
+  wp_auth_header: encrypt(encoded), -- store encrypted
+  wp_version: detectedVersion,
+  has_yoast: hasYoast,
+  connected_at: new Date().toISOString()
+});</pre>
+
+<h3>Publishing a Suburb Page</h3>
+<pre>// Publish a new page via WordPress REST API:
+POST {siteUrl}/wp-json/wp/v2/pages
+Headers:
+  Authorization: Basic {encrypted_auth_header_decrypted}
+  Content-Type: application/json
+
+{
+  "title": "Expert Plumber in Burwood — Fast & Reliable",
+  "content": "&lt;!-- HTML content --&gt;",
+  "status": "publish",       ← immediately live
+  "slug": "plumber-burwood", ← URL: /plumber-burwood
+  "meta": {
+    "_yoast_wpseo_title": "Plumber Burwood | Sydney Plumber Co",
+    "_yoast_wpseo_metadesc": "Need a plumber in Burwood?...",
+    // This adds the LocalBusiness JSON-LD schema to the page head:
+    "_yoast_wpseo_schema_page_type": "WebPage"
+  }
+}
+
+→ Returns: {
+  "id": 1234,
+  "link": "https://sydneyplumber.com.au/plumber-burwood",
+  "status": "publish"
+}</pre>
+
+<div class="ok-box"><p>✅ WordPress Application Passwords are available in all WordPress sites running version 5.6+ (released Dec 2020). They do NOT require any plugin. However, some hosting providers (like WP Engine) may disable them — check if the endpoint exists first.</p></div>
+
+<div class="warn-box"><p>⚠️ The Application Password is displayed ONCE by WordPress and never shown again. If the user loses it, they need to delete the old one and create a new one. Design your UI to handle this: provide a "Reconnect WordPress" option in case credentials stop working.</p></div>
+</div>
+</div>
+</div><!-- /wp screen -->
+
+<!-- ══════════════════════════════════════════════════════════
+     INTEGRATION 4 — GOOGLE ANALYTICS 4
+══════════════════════════════════════════════════════════ -->
+<div class="screen" id="ga4">
+<div class="split">
+<div class="mockup-col">
+<div class="flow-wrap">
+
+  <div class="flow-title">
+    <div class="badge" style="background:#F9AB00;">GA4</div>
+    Google Analytics 4 — Connection Flow
+  </div>
+
+  <div class="flow-tabs">
+    <button class="flow-tab active" onclick="showTab('ga4','t1',this)">Step 1 · Info screen</button>
+    <button class="flow-tab" onclick="showTab('ga4','t2',this)">Step 2 · Google sign-in</button>
+    <button class="flow-tab" onclick="showTab('ga4','t3',this)">Step 3 · Select property</button>
+    <button class="flow-tab" onclick="showTab('ga4','t4',this)">Step 4 · Connected ✓</button>
+  </div>
+
+  <!-- STEP 1 -->
+  <div class="tab-pane active" id="ga4-t1">
+    <div class="mock-card">
+      <div class="mock-card-head">
+        <div class="icon" style="background:#FFF3CD;">📊</div>
+        <div><h3>Connect Google Analytics 4 (GA4)</h3><p>Unlocks: Real visitor numbers in your monthly report instead of estimates</p></div>
+      </div>
+      <div class="mock-card-body">
+        <div style="background:#FFF9E6;border-radius:8px;padding:14px;margin-bottom:16px;border:1px solid #FDE68A;">
+          <div style="font-size:12px;font-weight:700;color:#92400E;margin-bottom:8px;">📊 What is Google Analytics 4 (GA4)?</div>
+          <p style="font-size:12px;color:#78350F;line-height:1.7;margin:0;">Google Analytics 4 is a free Google tool that counts how many people visit your website, where they came from, how long they stay, and what pages they look at. RankPilot uses this data to show you in the monthly report how many real visitors your website is getting — and whether those numbers are growing as your SEO rankings improve.</p>
+        </div>
+
+        <div style="background:#F8FAFC;border:1px solid var(--border);border-radius:8px;padding:12px;margin-bottom:16px;">
+          <div style="font-size:11px;font-weight:700;color:var(--mid);margin-bottom:8px;">📋 GA4 is OPTIONAL but recommended:</div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
+            <div style="font-size:11px;color:var(--mid);line-height:1.8;"><strong style="color:var(--navy);">Without GA4:</strong><br>• Traffic shown as estimate<br>• Based on keyword search volume<br>• Less precise but still useful</div>
+            <div style="font-size:11px;color:var(--mid);line-height:1.8;"><strong style="color:var(--navy);">With GA4:</strong><br>• Real visitor counts<br>• Actual bounce rate<br>• Conversion tracking possible</div>
+          </div>
+        </div>
+
+        <div style="background:#FFFBEB;border:1px solid #FDE68A;border-radius:8px;padding:10px;margin-bottom:14px;">
+          <div style="font-size:11px;color:#92400E;">⚡ <strong>Don't have GA4 set up yet?</strong> You need to create a Google Analytics account and add the tracking code to your website first. Go to <strong>analytics.google.com</strong>, create an account, create a property for your website, and install the GA4 tag (your web developer can help with this). This must be done before connecting here.</div>
+        </div>
+
+        <button class="btn btn-google" onclick="nextGa4Tab()">
+          <svg width="16" height="16" viewBox="0 0 24 24"><path fill="#fff" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/><path fill="#fff" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/><path fill="#fff" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"/><path fill="#fff" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/></svg>
+          Sign in with Google to Connect Analytics
+        </button>
+        <p style="font-size:10px;color:var(--lt);text-align:center;margin-top:8px;">Read-only access only. RankPilot cannot change any Analytics settings.</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- STEP 2: OAuth -->
+  <div class="tab-pane" id="ga4-t2">
+    <p style="font-size:11px;color:var(--mid);margin-bottom:12px;text-align:center;">Google OAuth consent screen — read-only Analytics scope:</p>
+    <div class="google-popup">
+      <div class="google-popup-head">
+        <div class="g-logo"><span>G</span><span>o</span><span>o</span><span>g</span><span>l</span><span>e</span></div>
+        <h4>Sign in with Google</h4>
+        <p>to continue to RankPilot</p>
+        <div style="margin-top:12px;background:#f1f3f4;border-radius:20px;padding:6px 12px;display:flex;align-items:center;gap:8px;">
+          <div style="width:28px;height:28px;border-radius:50%;background:#F9AB00;color:#fff;font-size:12px;font-weight:700;display:flex;align-items:center;justify-content:center;">J</div>
+          <div style="text-align:left;"><div style="font-size:12px;font-weight:600;color:#202124;">John Smith</div><div style="font-size:10px;color:#5f6368;">john@sydneyplumber.com.au</div></div>
+        </div>
+      </div>
+      <div class="google-popup-body">
+        <div style="font-size:12px;font-weight:600;color:#202124;margin-bottom:10px;">RankPilot wants to access your Google Account</div>
+        <div class="permission-item">
+          <div class="picon">📈</div>
+          <div class="ptext"><strong>View your Google Analytics data</strong>See traffic reports, visitor counts, and session data for websites you manage in Google Analytics</div>
+        </div>
+        <div class="permission-item">
+          <div class="picon">🌐</div>
+          <div class="ptext"><strong>View your Google Analytics account structure</strong>See which Analytics accounts and properties you have access to</div>
+        </div>
+      </div>
+      <div class="google-popup-foot">
+        <button class="g-btn g-btn-cancel">Cancel</button>
+        <button class="g-btn g-btn-allow" onclick="nextGa4Tab()">Allow</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- STEP 3: Select GA4 Property -->
+  <div class="tab-pane" id="ga4-t3">
+    <div class="mock-card">
+      <div class="mock-card-head">
+        <div class="icon" style="background:#FFF3CD;">📊</div>
+        <div><h3>Select your GA4 Property</h3><p>We found these Google Analytics properties in your account. Select the one tracking your website:</p></div>
+      </div>
+      <div class="mock-card-body">
+        <div style="font-size:11px;color:var(--lt);margin-bottom:10px;">GA4 Properties found in your Google Analytics account:</div>
+        <div class="property-list">
+          <div class="property-item selected">
+            <div class="radio" style="border-color:#F9AB00;background:#F9AB00;"></div>
+            <div>
+              <div class="prop-name">sydneyplumber.com.au</div>
+              <div class="prop-url">Property ID: 123456789 · GA4 · 890 sessions/month</div>
+            </div>
+          </div>
+          <div class="property-item">
+            <div class="radio"></div>
+            <div>
+              <div class="prop-name">sydneyplumber.com.au (old Universal Analytics)</div>
+              <div class="prop-url">⚠️ Universal Analytics is discontinued — use the GA4 property above</div>
+            </div>
+          </div>
+        </div>
+        <div style="background:#EEF4FF;border-radius:8px;padding:10px;margin-top:12px;border:1px solid #C7D7FD;font-size:11px;color:#3730A3;">
+          💡 Make sure you select a <strong>GA4 property</strong> (not Universal Analytics). GA4 properties have an ID that looks like <strong>G-XXXXXXXXXX</strong> or a numeric Property ID.
+        </div>
+        <button class="btn btn-primary" style="width:100%;margin-top:14px;background:#F9AB00;color:#000;" onclick="nextGa4Tab()">Connect this Property →</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- STEP 4: Success -->
+  <div class="tab-pane" id="ga4-t4">
+    <div class="success-card">
+      <div class="success-icon">✅</div>
+      <h3>Google Analytics 4 Connected!</h3>
+      <p>Your monthly reports will now show real visitor numbers, traffic trends, and how many people are finding you through Google Search — compared to before RankPilot started.</p>
+      <div class="success-details">
+        <div class="detail-item"><div class="dlabel">Property Connected</div><div class="dval">sydneyplumber.com.au</div></div>
+        <div class="detail-item"><div class="dlabel">Property ID</div><div class="dval">G-ABC123DEF4</div></div>
+        <div class="detail-item"><div class="dlabel">Data Access</div><div class="dval">Read-only ✓</div></div>
+        <div class="detail-item"><div class="dlabel">Historical Data</div><div class="dval">12 months imported</div></div>
+        <div class="detail-item"><div class="dlabel">Sessions This Month</div><div class="dval">890 sessions</div></div>
+        <div class="detail-item"><div class="dlabel">Organic Search %</div><div class="dval">64% from Google</div></div>
+      </div>
+    </div>
+  </div>
+
+</div>
+</div>
+
+<div class="devnotes">
+<h2>🛠 Developer Guide — Google Analytics 4</h2>
+
+<div class="term-box"><div class="term">GA4 vs Universal Analytics</div><p>Google had an older analytics system called "Universal Analytics" (UA) which was shut down in 2024. All websites now use GA4 (Google Analytics 4). If you see property IDs starting with "UA-", those are the old system and no longer work. Use only GA4 properties (numeric Property ID or measurement ID starting with "G-").</p></div>
+
+<h3>OAuth Scopes for GA4</h3>
+<pre>const scope = [
+  'https://www.googleapis.com/auth/analytics.readonly'
+  // Read-only — we never write to Analytics
+].join(' ');</pre>
+
+<h3>List GA4 Properties</h3>
+<span class="api-pill">Google Analytics Admin API</span>
+<pre>// After OAuth, list available accounts and properties:
+GET https://analyticsadmin.googleapis.com/v1beta/
+  accountSummaries
+Headers: Authorization: Bearer {access_token}
+
+→ Returns: {
+  accountSummaries: [{
+    account: "accounts/123",
+    displayName: "John's Analytics",
+    propertySummaries: [{
+      property: "properties/456789",
+      displayName: "sydneyplumber.com.au",
+      propertyType: "PROPERTY_TYPE_ORDINARY" ← GA4
+    }]
+  }]
+}</pre>
+
+<h3>Pull Data from GA4</h3>
+<span class="api-pill">Google Analytics Data API (GA4)</span>
+<pre>POST https://analyticsdata.googleapis.com/v1beta/
+  properties/{propertyId}:runReport
+Headers: Authorization: Bearer {access_token}
+
+{
+  "dateRanges": [{
+    "startDate": "2026-03-01",
+    "endDate": "2026-04-01"
+  }],
+  "metrics": [
+    { "name": "sessions" },
+    { "name": "totalUsers" },
+    { "name": "bounceRate" }
+  ],
+  "dimensions": [
+    { "name": "sessionDefaultChannelGroup" }
+    // Breaks down by: Organic Search, Direct, Referral...
+  ]
+}
+
+→ Returns: {
+  rows: [{
+    dimensionValues: [{ value: "Organic Search" }],
+    metricValues: [
+      { value: "574" },  // sessions from Google
+      { value: "489" },  // unique users
+      { value: "0.42" }  // bounce rate
+    ]
+  }]
+}</pre>
+
+<h3>Store GA4 Property ID</h3>
+<span class="db-pill">client_integrations</span>
+<pre>await supabase.from('client_integrations').upsert({
+  client_id: clientId,
+  type: 'ga4',
+  property_id: '456789',        // GA4 numeric property ID
+  measurement_id: 'G-ABC123',   // for reference
+  account_id: '123',
+  access_token: encrypt(tokens.access_token),
+  refresh_token: encrypt(tokens.refresh_token),
+  token_expires_at: ...,
+  connected_at: new Date().toISOString()
+});</pre>
+
+<h3>What to Show in Monthly Report (from GA4)</h3>
+<pre>// Pull for the report month:
+metrics: [sessions, totalUsers, bounceRate, avgSessionDuration]
+dimensions: [sessionDefaultChannelGroup]
+
+// Calculate:
+organic_sessions = rows.find(r => 
+  r.dimension == "Organic Search").sessions
+organic_growth = (this_month_organic - last_month_organic) 
+                 / last_month_organic * 100
+
+// Show in report:
+"Your website received {organic_sessions} visitors 
+from Google this month — a {organic_growth}% 
+increase from last month."</pre>
+
+<div class="ok-box"><p>✅ GA4 connection is marked as OPTIONAL in the onboarding flow. If a client skips it, RankPilot shows traffic ESTIMATES (based on keyword volume × estimated CTR). When GA4 is connected later, the estimates are replaced with real data automatically on the next monthly report.</p></div>
+
+<div class="warn-box"><p>⚠️ Make sure to enable the "Google Analytics Data API" in your Google Cloud Console project — it's separate from the "Google Analytics Admin API". You need BOTH enabled: Admin API for listing properties, Data API for pulling reports.</p></div>
+</div>
+</div>
+</div><!-- /ga4 screen -->
+
+<script>
+function show(id, btn) {
+  document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
+  document.querySelectorAll('.topnav button').forEach(b => b.classList.remove('active'));
+  document.getElementById(id).classList.add('active');
+  btn.classList.add('active');
+  window.scrollTo(0,0);
+}
+
+function showTab(screen, tab, btn) {
+  const panes = document.querySelectorAll('#' + screen + ' .tab-pane');
+  const tabs = btn.closest('.flow-tabs').querySelectorAll('.flow-tab');
+  panes.forEach(p => p.classList.remove('active'));
+  tabs.forEach(t => t.classList.remove('active'));
+  document.getElementById(screen + '-' + tab).classList.add('active');
+  btn.classList.add('active');
+}
+
+function nextGscTab() {
+  const tabs = document.querySelectorAll('#gsc .flow-tab');
+  const panes = document.querySelectorAll('#gsc .tab-pane');
+  for (let i = 0; i < panes.length; i++) {
+    if (panes[i].classList.contains('active') && i < panes.length-1) {
+      panes[i].classList.remove('active');
+      panes[i+1].classList.add('active');
+      tabs.forEach(t => t.classList.remove('active'));
+      tabs[i+1].classList.add('active');
+      break;
+    }
+  }
+}
+function nextGbpTab() {
+  const tabs = document.querySelectorAll('#gbp .flow-tab');
+  const panes = document.querySelectorAll('#gbp .tab-pane');
+  for (let i = 0; i < panes.length; i++) {
+    if (panes[i].classList.contains('active') && i < panes.length-1) {
+      panes[i].classList.remove('active'); panes[i+1].classList.add('active');
+      tabs.forEach(t => t.classList.remove('active')); tabs[i+1].classList.add('active'); break;
+    }
+  }
+}
+function nextWpTab() {
+  const tabs = document.querySelectorAll('#wp .flow-tab');
+  const panes = document.querySelectorAll('#wp .tab-pane');
+  for (let i = 0; i < panes.length; i++) {
+    if (panes[i].classList.contains('active') && i < panes.length-1) {
+      panes[i].classList.remove('active'); panes[i+1].classList.add('active');
+      tabs.forEach(t => t.classList.remove('active')); tabs[i+1].classList.add('active'); break;
+    }
+  }
+}
+function nextGa4Tab() {
+  const tabs = document.querySelectorAll('#ga4 .flow-tab');
+  const panes = document.querySelectorAll('#ga4 .tab-pane');
+  for (let i = 0; i < panes.length; i++) {
+    if (panes[i].classList.contains('active') && i < panes.length-1) {
+      panes[i].classList.remove('active'); panes[i+1].classList.add('active');
+      tabs.forEach(t => t.classList.remove('active')); tabs[i+1].classList.add('active'); break;
+    }
+  }
+}
+</script>
+</body>
+</html>

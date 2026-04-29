@@ -1,0 +1,12 @@
+@import "leaflet/dist/leaflet.css";
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  body {
+    @apply font-sans text-navy antialiased;
+    background-color: #EDF4DD;
+  }
+}

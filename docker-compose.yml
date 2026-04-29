@@ -1,0 +1,19 @@
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_USER: rankpilot
+      POSTGRES_PASSWORD: rankpilot
+      POSTGRES_DB: rankpilot
+    ports:
+      - "5432:5432"
+    volumes:
+      - rankpilot_pg:/var/lib/postgresql/data
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+
+volumes:
+  rankpilot_pg:
