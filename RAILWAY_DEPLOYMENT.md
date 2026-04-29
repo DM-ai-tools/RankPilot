@@ -28,6 +28,17 @@ You can fix this in either way:
 
 You do **not** need a local Postgres machine; use Railway’s **PostgreSQL** plugin only. The app reads `DATABASE_URL` from Railway automatically.
 
+### One GitHub repo, two Railway services (recommended)
+
+Railway shows **one line to GitHub per service** you create — that is normal. The **same** repo can power **multiple** services:
+
+| Service name (example) | Role | How to create |
+|------------------------|------|----------------|
+| **RankPilot** (existing) | API | Already using root **`Dockerfile`**. |
+| **RankPilot-Web** (new) | SPA | **+ New** → **GitHub Repo** → pick the **same** repo → **Settings → Build → Dockerfile path** = **`frontend/Dockerfile`**. Leave **Root Directory** empty. |
+
+Build logs that say *skipping `frontend/Dockerfile`* only apply to the **API** service (it correctly uses the root Dockerfile). The **web** service must be configured to use `frontend/Dockerfile` explicitly.
+
 ---
 
 ## Step 1 — Create a New Railway Project
@@ -197,6 +208,19 @@ Make sure to update:
 
 **Maps scan jobs stuck**
 → The app auto-resets `running` jobs to `queued` on startup. Restart the backend service if jobs appear stuck.
+
+**Deploy logs: `ConnectionRefusedError` / `[Errno 111] Connection refused` when connecting to Postgres**
+
+→ The API container is **not** using Railway’s Postgres URL (often it still has `localhost` from a copied `.env` or an unset variable). Fix it on the **RankPilot** (backend) service:
+
+1. Open your **Postgres** plugin in the same Railway project and confirm it exposes **`DATABASE_URL`**.
+2. Open **RankPilot** → **Variables**.
+3. Add or replace **`DATABASE_URL`**: use **Variable Reference** (recommended) so it always matches the plugin, e.g. click **Reference** → choose your Postgres service → **`DATABASE_URL`**. Railway will insert a value like `${{ Postgres.DATABASE_URL }}` (exact name depends on how you named the Postgres service).
+4. Add **`REDIS_URL`** the same way from your **Redis** service if the worker uses it.
+5. **Remove** any manual `DATABASE_URL` that points to `localhost` or `127.0.0.1` — inside Docker, “localhost” is the container itself, not Railway Postgres.
+6. **Redeploy** the RankPilot service.
+
+After Postgres is reachable, run migrations once (Railway **Shell** on the API service): `python scripts/apply_migrations.py`.
 
 ---
 
