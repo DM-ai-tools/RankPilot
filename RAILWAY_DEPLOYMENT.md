@@ -19,12 +19,13 @@ If the service builds from the **repository root** with **Root Directory empty**
 
 You can fix this in either way:
 
-1. **Dockerfile (works with repo root, no Root Directory)**  
-   This repo includes a **root `Dockerfile`** that builds the **API** from `backend/` + `infra/sql/`. Railway detects it and uses the **Docker** builder instead of Railpack for the default service.  
-   For the **frontend** service, open **Settings → Build → Dockerfile path** and set **`frontend/Dockerfile`** (still use **empty** Root Directory so `COPY frontend/…` works). Do **not** use the root Dockerfile for the frontend.
+1. **Root Directory (recommended)**  
+   Set **Settings → Source → Root Directory** to **`backend`** for the API service and **`frontend`** for the SPA. Each service then only sees one stack (Python vs Node), which avoids Railpack confusion and avoids the SPA accidentally building as Python.
 
-2. **Root Directory (Railpack-friendly)**  
-   Set **Settings → Source → Root Directory** to `backend` or `frontend` for each service. Optionally point **Railway config file** to `backend/railway.toml` or `frontend/railway.toml` as in [Railway monorepo docs](https://docs.railway.com/guides/monorepo).
+2. **Dockerfile at repo root (API only)**  
+   The **root `Dockerfile`** builds the **API** from `backend/` + `infra/sql/` when Root Directory is empty. Use that **only** for the backend service. Do **not** point the SPA service at the root Dockerfile.
+
+**SPA service build:** Set **Root Directory** = **`frontend`**, **Dockerfile path** = **`Dockerfile`** (the file inside `frontend/`). The SPA image is Node + `serve` only — if deploy logs show **SQLAlchemy / asyncpg / uvicorn**, the wrong service root or Dockerfile is selected (you are running the API on the “front-end” service).
 
 You do **not** need a local Postgres machine; use Railway’s **PostgreSQL** plugin only. The app reads `DATABASE_URL` from Railway automatically.
 
@@ -34,10 +35,10 @@ Railway shows **one line to GitHub per service** you create — that is normal. 
 
 | Service name (example) | Role | How to create |
 |------------------------|------|----------------|
-| **RankPilot** (existing) | API | Already using root **`Dockerfile`**. |
-| **RankPilot-Web** (new) | SPA | **+ New** → **GitHub Repo** → pick the **same** repo → **Settings → Build → Dockerfile path** = **`frontend/Dockerfile`**. Leave **Root Directory** empty. |
+| **RankPilot** (existing) | API | **Root Directory** = **`backend`**, or empty root + root **`Dockerfile`** (see above). |
+| **RankPilot-Web** (new) | SPA | **+ New** → same repo → **Root Directory** = **`frontend`** → **Dockerfile path** = **`Dockerfile`**. Clear any **Custom start command** that runs `uvicorn`. |
 
-Build logs that say *skipping `frontend/Dockerfile`* only apply to the **API** service (it correctly uses the root Dockerfile). The **web** service must be configured to use `frontend/Dockerfile` explicitly.
+Build logs that show **Python / Postgres** on a service named “front-end” mean that service is **not** building from `frontend/` — fix Root Directory and Dockerfile as in the table.
 
 ---
 
@@ -192,7 +193,11 @@ Make sure to update:
 
 **Railpack: “could not determine how to build the app” / skipping `frontend/railway.toml`**
 
-→ With **Root Directory empty**, Railpack only looks at the repo root (no `pyproject.toml` / `package.json` there). Either set **Root Directory** to `backend` or `frontend`, or use the **root `Dockerfile`** for the API and **`frontend/Dockerfile`** for the SPA (see the “Critical” section above).
+→ With **Root Directory empty**, Railpack only looks at the repo root (no `pyproject.toml` / `package.json` there). Set **Root Directory** to **`backend`** or **`frontend`**, or use the **root `Dockerfile`** for the API only (see the “Critical” section above).
+
+**“Front-end” deploy logs show SQLAlchemy / asyncpg / `app.workers`**
+
+→ That service is running the **Python API**, not the Vite SPA. Open **Settings → Source / Build**: set **Root Directory** to **`frontend`**, **Dockerfile** to **`Dockerfile`**, remove **Start Command** overrides like `uvicorn …`, then redeploy.
 
 **Build fails with "No start command"**
 → Ensure the service Root Directory is set to `backend` or `frontend` respectively.

@@ -1,6 +1,11 @@
+# Used when the Railway service Root Directory is set to `frontend/`.
+# Build is Node + static `serve` only — never Python / Postgres.
+
 [build]
-builder = "nixpacks"
-buildCommand = "npm install && npm run build"
+builder = "DOCKERFILE"
+dockerfilePath = "Dockerfile"
 
 [deploy]
-startCommand = "npm start"
+# CMD from Dockerfile (serve). Do not set uvicorn here.
+healthcheckPath = "/"
+healthcheckTimeout = 30
