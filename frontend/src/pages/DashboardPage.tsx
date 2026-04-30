@@ -261,13 +261,7 @@ export function DashboardPage() {
             {formatApiError((saveAndScan.isError ? saveAndScan.error : scan.error) as Error)}
           </div>
         ) : null}
-        {scan.isSuccess && !saveAndScan.isSuccess ? (
-          <div className="mb-4 rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-2.5 text-xs text-emerald-800">
-            Scan queued (job {scan.data.job_id}). The background worker picks up jobs about every 10 seconds; this page
-            will update when ranks are written. If nothing changes after several minutes, check the API logs for
-            DataForSEO errors.
-          </div>
-        ) : null}
+        {scan.isSuccess && !saveAndScan.isSuccess ? null : null}
 
         {me.isError ? (
           <div className="mb-4 rounded-lg border border-red-200 bg-red-50 px-4 py-2.5 text-xs text-red-700">
