@@ -24,6 +24,12 @@ class Settings(BaseSettings):
     database_url: str = "postgresql+asyncpg://rankpilot:rankpilot@localhost:5432/rankpilot"
     redis_url: str = "redis://localhost:6379/0"
 
+    # When false (default), first boot runs scripts/apply_migrations.py if rp_jobs is missing (no Railway Shell).
+    skip_auto_sql_migrate: bool = Field(
+        default=False,
+        validation_alias=AliasChoices("RANKPILOT_SKIP_AUTO_MIGRATE"),
+    )
+
     jwt_secret_key: str = ""
     jwt_algorithm: str = "HS256"
     access_token_expire_minutes: int = 60

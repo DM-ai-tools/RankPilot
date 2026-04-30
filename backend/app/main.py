@@ -1,7 +1,12 @@
 """L4: API gateway — mounts versioned REST routes under /api/v1."""
 
+import asyncio
 import logging
+import os
+import subprocess
+import sys
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -32,6 +37,21 @@ async def _core_schema_ready() -> bool:
         return False
 
 
+def _apply_migrations_subprocess() -> int:
+    """Run infra/sql via psql (same as `python scripts/apply_migrations.py`). Returns exit code."""
+    root = Path(__file__).resolve().parent.parent
+    script = root / "scripts" / "apply_migrations.py"
+    if not script.is_file():
+        logger.error("Migration script missing: %s", script)
+        return 1
+    return subprocess.run(
+        [sys.executable, str(script)],
+        cwd=str(root),
+        env=os.environ.copy(),
+        check=False,
+    ).returncode
+
+
 def _cors_allow_origins(settings) -> list[str]:
     raw = (settings.cors_origins or "").strip()
     parts = [x.strip() for x in raw.split(",") if x.strip()]
@@ -53,6 +73,28 @@ async def lifespan(_app: FastAPI):
     configure_engine(settings.database_url, echo=settings.debug)
 
     schema_ok = await _core_schema_ready()
+    if not schema_ok and not settings.skip_auto_sql_migrate:
+        logger.warning(
+            "RankPilot core tables missing; applying infra/sql migrations automatically "
+            "(Railway and other hosts without an interactive shell)."
+        )
+        code = await asyncio.to_thread(_apply_migrations_subprocess)
+        schema_ok = await _core_schema_ready()
+        if code != 0 and not schema_ok:
+            logger.critical(
+                "apply_migrations.py exited with %s; DATABASE_URL must reach Postgres and "
+                "infra/sql must apply cleanly. Check deploy logs above.",
+                code,
+            )
+            raise RuntimeError("RankPilot: database migration failed")
+        if code != 0 and schema_ok:
+            logger.info(
+                "apply_migrations.py exited with %s but schema is present (likely concurrent deploy); continuing.",
+                code,
+            )
+        elif schema_ok:
+            logger.info("Database migrations applied; core tables present.")
+
     if schema_ok:
         try:
             await ensure_rp_clients_search_radius()
@@ -78,10 +120,10 @@ async def lifespan(_app: FastAPI):
 
     if not schema_ok:
         logger.error(
-            "PostgreSQL is reachable but RankPilot tables are missing (fresh database). "
-            "Railway → this service → Shell, then run exactly:  python scripts/apply_migrations.py  "
-            "After it finishes, redeploy or restart the service. "
-            "Scheduler is OFF until then so logs are not spammed."
+            "PostgreSQL is reachable but RankPilot tables are still missing. "
+            "If you disabled auto-migrate, unset RANKPILOT_SKIP_AUTO_MIGRATE or run locally: "
+            "cd backend && python scripts/apply_migrations.py (with DATABASE_URL pointing at this DB). "
+            "Scheduler stays off until tables exist."
         )
     else:
         # Reset any jobs left in 'running' from a previous hot-reload / crash.
