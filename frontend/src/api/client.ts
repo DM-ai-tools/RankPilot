@@ -7,6 +7,11 @@ import { useAuthStore } from "../stores/authStore";
 
 const defaultBase = "";
 
+/** VITE_API_BASE_URL at build time; strip trailing `/` so paths like `/api/v1/...` do not become `//api/...`. */
+function viteApiBase(): string {
+  return String(import.meta.env.VITE_API_BASE_URL ?? "").trim().replace(/\/+$/, "");
+}
+
 function authHeaders(): HeadersInit {
   const token = useAuthStore.getState().accessToken;
   return {
@@ -49,7 +54,7 @@ export function formatApiError(err: unknown): string {
 }
 
 export async function apiGet<T>(path: string): Promise<T> {
-  const base = import.meta.env.VITE_API_BASE_URL ?? defaultBase;
+  const base = viteApiBase() || defaultBase;
   const res = await fetch(`${base}${path}`, { headers: authHeaders() });
   if (!res.ok) {
     signOutIfUnauthorized(res.status, path);
@@ -60,7 +65,7 @@ export async function apiGet<T>(path: string): Promise<T> {
 }
 
 export async function apiPostJson<T, B = unknown>(path: string, body: B): Promise<T> {
-  const base = import.meta.env.VITE_API_BASE_URL ?? defaultBase;
+  const base = viteApiBase() || defaultBase;
   const res = await fetch(`${base}${path}`, {
     method: "POST",
     headers: { ...authHeaders(), "Content-Type": "application/json" },
@@ -75,7 +80,7 @@ export async function apiPostJson<T, B = unknown>(path: string, body: B): Promis
 }
 
 export async function apiPatchJson<T, B = unknown>(path: string, body: B): Promise<T> {
-  const base = import.meta.env.VITE_API_BASE_URL ?? defaultBase;
+  const base = viteApiBase() || defaultBase;
   const res = await fetch(`${base}${path}`, {
     method: "PATCH",
     headers: { ...authHeaders(), "Content-Type": "application/json" },
@@ -90,7 +95,7 @@ export async function apiPatchJson<T, B = unknown>(path: string, body: B): Promi
 }
 
 export async function apiDelete<T = unknown>(path: string): Promise<T> {
-  const base = import.meta.env.VITE_API_BASE_URL ?? defaultBase;
+  const base = viteApiBase() || defaultBase;
   const res = await fetch(`${base}${path}`, {
     method: "DELETE",
     headers: authHeaders(),
@@ -105,7 +110,7 @@ export async function apiDelete<T = unknown>(path: string): Promise<T> {
 
 /** POST without Bearer (e.g. login). */
 export async function apiPostPublic<T, B = unknown>(path: string, body: B): Promise<T> {
-  const base = import.meta.env.VITE_API_BASE_URL ?? defaultBase;
+  const base = viteApiBase() || defaultBase;
   const res = await fetch(`${base}${path}`, {
     method: "POST",
     headers: {
