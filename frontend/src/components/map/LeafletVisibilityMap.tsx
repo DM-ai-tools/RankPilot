@@ -117,11 +117,13 @@ export function LeafletVisibilityMap({
   suburbs,
   companyPoint,
   competitorPins,
+  radiusKm,
   heightClass = "h-[400px]",
 }: {
   suburbs: SuburbRank[];
   companyPoint?: CompanyMapPoint | null;
   competitorPins?: MapPackPlace[] | null;
+  radiusKm?: number | null;
   heightClass?: string;
 }) {
   const points = useMemo(
@@ -142,7 +144,7 @@ export function LeafletVisibilityMap({
     [suburbs],
   );
 
-  const pins = competitorPins ?? [];
+  const pins: MapPackPlace[] = [];
 
   const fitPoints = useMemo(() => {
     const base: Point[] = [...points];
@@ -156,18 +158,10 @@ export function LeafletVisibilityMap({
         radiusM: 800,
       });
     }
-    for (const c of pins) {
-      base.push({
-        suburb: c.title,
-        rank: c.rank,
-        lat: c.lat,
-        lng: c.lng,
-        vol: 1,
-        radiusM: 500,
-      });
-    }
+    // Competitor pins are NOT added to fitPoints — some have bad coordinates
+    // from DataForSEO that would zoom the map out to the wrong part of Australia.
     return base;
-  }, [points, companyPoint, pins]);
+  }, [points, companyPoint]);
 
   if (!points.length && !companyPoint && !pins.length) {
     return (
@@ -215,31 +209,20 @@ export function LeafletVisibilityMap({
           </Circle>
         ))}
 
-        {pins.map((c, idx) => (
-          <Marker
-            key={`${c.lat}-${c.lng}-${c.title}-${idx}`}
-            position={[c.lat, c.lng]}
-            icon={PACK_PIN_ICON}
-            zIndexOffset={800}
-          >
-            <Popup>
-              <div className="max-w-[220px] text-xs">
-                <div className="font-semibold text-navy">{c.title}</div>
-                {c.rank != null ? <div>Maps pack position: #{c.rank}</div> : null}
-                {c.address ? <div className="mt-0.5 text-rp-tlight">{c.address}</div> : null}
-                {c.suburb_context ? (
-                  <div className="mt-0.5 text-[10px] text-rp-tlight">SERP near: {c.suburb_context}</div>
-                ) : null}
-                {c.domain ? <div className="mt-0.5 font-mono text-[10px]">{c.domain}</div> : null}
-                {c.url ? (
-                  <a className="mt-1 block truncate text-[#72C219] hover:underline" href={c.url} target="_blank" rel="noreferrer">
-                    Open link ↗
-                  </a>
-                ) : null}
-              </div>
-            </Popup>
-          </Marker>
-        ))}
+
+        {companyPoint && radiusKm ? (
+          <Circle
+            center={[companyPoint.lat, companyPoint.lng]}
+            radius={radiusKm * 1000}
+            pathOptions={{
+              color: "#72C219",
+              fillColor: "transparent",
+              fillOpacity: 0,
+              weight: 2,
+              dashArray: "6 4",
+            }}
+          />
+        ) : null}
 
         {companyPoint ? (
           <Marker
@@ -275,7 +258,7 @@ export function LeafletVisibilityMap({
           <span className="font-semibold text-navy">○</span> Rings = suburb zone (km radius, grows/shrinks when you zoom)
         </div>
         <div className="mt-1 text-[9px] leading-tight text-rp-tlight">
-          Blue marker = your business · red markers = pack competitors
+          Blue marker = your business location
         </div>
       </div>
     </div>

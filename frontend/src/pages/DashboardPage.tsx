@@ -507,6 +507,7 @@ export function DashboardPage() {
                     suburbs={ranks.data?.suburbs ?? []}
                     companyPoint={companyMapPoint}
                     competitorPins={ranks.data?.map_competitors ?? []}
+                    radiusKm={me.data?.search_radius_km ?? null}
                     heightClass="h-[300px]"
                   />
                 </div>

@@ -87,6 +87,7 @@ def main() -> int:
         "010_perf_indexes.sql",
         "011_business_nap.sql",
         "012_citation_scraped_nap.sql",
+        "013_clear_demo_suburb_grid.sql",
     ]
 
     env = os.environ.copy()

@@ -17,21 +17,8 @@ VALUES (
   'Melbourne, VIC'
 );
 
-INSERT INTO rp_suburb_grid (id, client_id, suburb, state, postcode, lat, lng, population, rank_priority)
-VALUES
-  ('10000000-0000-7000-8000-000000000001', '018f3b2e-7b00-7b00-7b00-000000000001', 'Melbourne CBD', 'VIC', '3000', -37.8136, 144.9631, 28000, 1),
-  ('10000000-0000-7000-8000-000000000002', '018f3b2e-7b00-7b00-7b00-000000000001', 'Footscray', 'VIC', '3011', -37.8000, 144.9000, 91000, 2),
-  ('10000000-0000-7000-8000-000000000003', '018f3b2e-7b00-7b00-7b00-000000000001', 'Northcote', 'VIC', '3070', -37.7700, 145.0000, 45000, 3),
-  ('10000000-0000-7000-8000-000000000004', '018f3b2e-7b00-7b00-7b00-000000000001', 'Essendon', 'VIC', '3040', -37.7600, 144.9200, 110000, 4),
-  ('10000000-0000-7000-8000-000000000005', '018f3b2e-7b00-7b00-7b00-000000000001', 'Williamstown', 'VIC', '3016', -37.8600, 144.8900, 28000, 5);
-
-INSERT INTO rp_rank_history (id, client_id, suburb_id, keyword, rank_position, checked_at)
-VALUES
-  ('20000000-0000-7000-8000-000000000001', '018f3b2e-7b00-7b00-7b00-000000000001', '10000000-0000-7000-8000-000000000001', 'pest control melbourne', 1, now()),
-  ('20000000-0000-7000-8000-000000000002', '018f3b2e-7b00-7b00-7b00-000000000001', '10000000-0000-7000-8000-000000000002', 'pest control melbourne', 15, now()),
-  ('20000000-0000-7000-8000-000000000003', '018f3b2e-7b00-7b00-7b00-000000000001', '10000000-0000-7000-8000-000000000003', 'pest control melbourne', 7, now()),
-  ('20000000-0000-7000-8000-000000000004', '018f3b2e-7b00-7b00-7b00-000000000001', '10000000-0000-7000-8000-000000000004', 'pest control melbourne', NULL, now()),
-  ('20000000-0000-7000-8000-000000000005', '018f3b2e-7b00-7b00-7b00-000000000001', '10000000-0000-7000-8000-000000000005', 'pest control melbourne', 18, now());
+-- Suburb grid and rank history intentionally omitted.
+-- They are seeded correctly via onboarding (respects user's chosen radius).
 
 -- Content queue: no placeholder rows — use "Generate content" in the app (Claude + DB).
 
