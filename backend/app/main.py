@@ -18,6 +18,7 @@ from app.db.schema_bootstrap import (
     ensure_rp_suburb_grid_client_index,
 )
 from sqlalchemy import text
+from sqlalchemy.engine.url import make_url
 
 from app.db.session import configure_engine, dispose_engine, session_maker
 from app.routes.v1 import api_router
@@ -27,14 +28,38 @@ from app.workers.scheduler import register_jobs, scheduler
 logger = logging.getLogger(__name__)
 
 
-async def _core_schema_ready() -> bool:
-    """True once infra/sql migrations have been applied (rp_jobs exists)."""
+def _redact_database_url(raw: str) -> str:
+    """Log-friendly DATABASE_URL (password hidden)."""
     try:
-        async with session_maker()() as s:
-            r = await s.execute(text("SELECT to_regclass('public.rp_jobs')"))
-            return r.scalar() is not None
+        u = make_url(raw)
+        return u.render_as_string(hide_password=True)
     except Exception:
-        return False
+        return "<invalid DATABASE_URL>"
+
+
+def _warn_railway_localhost_db(database_url: str) -> None:
+    if not os.environ.get("RAILWAY_ENVIRONMENT") and not os.environ.get("RAILWAY_PROJECT_ID"):
+        return
+    low = (database_url or "").lower()
+    if "localhost" in low or "127.0.0.1" in low:
+        logger.critical(
+            "DATABASE_URL points at localhost but this process runs on Railway. "
+            "Add the Postgres plugin to the project and set DATABASE_URL via Variable Reference "
+            "to that service (hostname is never localhost inside the container)."
+        )
+
+
+async def _ping_database() -> None:
+    """Fail fast if Postgres is unreachable (do not treat as 'missing tables')."""
+    async with session_maker()() as s:
+        await s.execute(text("SELECT 1"))
+
+
+async def _core_schema_ready() -> bool:
+    """True once infra/sql migrations have been applied (rp_jobs exists). DB must already respond."""
+    async with session_maker()() as s:
+        r = await s.execute(text("SELECT to_regclass('public.rp_jobs')"))
+        return r.scalar() is not None
 
 
 def _apply_migrations_subprocess() -> int:
@@ -71,6 +96,19 @@ def _cors_allow_origin_regex(settings) -> str | None:
 async def lifespan(_app: FastAPI):
     settings = get_settings()
     configure_engine(settings.database_url, echo=settings.debug)
+    _warn_railway_localhost_db(settings.database_url)
+    logger.info("PostgreSQL target: %s", _redact_database_url(settings.database_url))
+
+    try:
+        await _ping_database()
+    except Exception as exc:
+        logger.critical(
+            "Cannot reach PostgreSQL at startup (%s). The public API URL can still work for routes "
+            "that do not touch the DB, but /api/v1 and workers need a valid DATABASE_URL. "
+            "On Railway: Variables → add reference to your Postgres service; redeploy.",
+            exc,
+        )
+        raise
 
     schema_ok = await _core_schema_ready()
     if not schema_ok and not settings.skip_auto_sql_migrate:

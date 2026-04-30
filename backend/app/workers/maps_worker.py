@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from datetime import UTC, datetime
 from uuid import UUID
 
@@ -368,8 +369,34 @@ async def _run_maps_scan_safe(job_id: str, client_id: str, payload: dict) -> Non
         await _update_job(job_id, "failed", error=str(exc))
 
 
+def _is_transient_db_connect_error(exc: BaseException) -> bool:
+    """True for TCP refused / timeouts so we log briefly instead of full traceback every poll."""
+    if isinstance(exc, (ConnectionRefusedError, TimeoutError, asyncio.TimeoutError)):
+        return True
+    if isinstance(exc, OSError) and getattr(exc, "errno", None) in (111, 110):  # refused, timeout
+        return True
+    cur: BaseException | None = exc
+    for _ in range(10):
+        if cur is None:
+            break
+        if isinstance(cur, (ConnectionRefusedError, TimeoutError, asyncio.TimeoutError)):
+            return True
+        if isinstance(cur, OSError) and getattr(cur, "errno", None) in (111, 110):
+            return True
+        msg = str(cur).lower()
+        if "connection refused" in msg or "cannot connect" in msg or "name or service not known" in msg:
+            return True
+        cur = cur.__cause__ or getattr(cur, "orig", None)
+    return False
+
+
+_last_db_poll_warn_mono: float = 0.0
+_DB_POLL_WARN_INTERVAL_SEC = 300.0
+
+
 async def poll_and_run_jobs() -> None:
     """Dequeue one pending maps_scan job and run it. Called by scheduler."""
+    global _last_db_poll_warn_mono
     try:
         maker = session_maker()
         async with maker() as session:
@@ -402,5 +429,16 @@ async def poll_and_run_jobs() -> None:
             await session.commit()
 
         asyncio.create_task(_run_maps_scan_safe(job_id, client_id, payload))
-    except Exception:
+    except Exception as exc:
+        if _is_transient_db_connect_error(exc):
+            now = time.monotonic()
+            if now - _last_db_poll_warn_mono >= _DB_POLL_WARN_INTERVAL_SEC:
+                _last_db_poll_warn_mono = now
+                logger.error(
+                    "poll_and_run_jobs: database unreachable (%s). Fix DATABASE_URL / Postgres service; "
+                    "suppressing repeated tracebacks for %s s.",
+                    exc,
+                    int(_DB_POLL_WARN_INTERVAL_SEC),
+                )
+            return
         logger.exception("poll_and_run_jobs error")
