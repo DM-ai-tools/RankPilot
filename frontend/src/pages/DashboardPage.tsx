@@ -200,14 +200,22 @@ export function DashboardPage() {
           lat: me.data.business_lat as number,
           lng: me.data.business_lng as number,
           label: me.data.business_name || "Your business",
+          address: me.data.business_address ?? null,
           locationSource: me.data.business_location_source ?? null,
         }
       : null;
 
-  const packPinCount = ranks.data?.map_competitors?.length ?? 0;
-  const heatMapSubtitle = o
-    ? `${o.metro_label} · "${o.keyword}"${packPinCount > 0 ? ` · ${packPinCount} competitor pin${packPinCount !== 1 ? "s" : ""} (Maps SERP)` : ""}`
-    : "";
+  const radiusKm = me.data?.search_radius_km ?? null;
+  const radiusLabel = radiusKm
+    ? radiusKm <= 5  ? `0–5 km (local block)`
+    : radiusKm <= 10 ? `6–10 km (local)`
+    : radiusKm <= 15 ? `11–15 km (suburb)`
+    : radiusKm <= 20 ? `16–20 km (greater metro)`
+    : radiusKm <= 25 ? `21–25 km (city-wide)`
+    : `26–30 km (regional)`
+    : null;
+
+  const heatMapSubtitle = o ? `${o.metro_label} · "${o.keyword}"` : "";
 
   const nearMiss = (opportunities.data?.items ?? [])
     .filter((op) => op.rank_position != null && op.rank_position >= 11 && op.rank_position <= 20)
@@ -473,42 +481,23 @@ export function DashboardPage() {
             <div className="grid gap-[14px] lg:grid-cols-[1fr_300px]">
               <Card>
                 <CardHeader
-                  title="Suburb Heat Map"
-                  subtitle={heatMapSubtitle}
+                  title={`Visibility Map${o.keyword ? ` – '${o.keyword}'` : ""}`}
+                  subtitle={`${ranks.data?.suburbs?.length ?? 0} suburbs${radiusLabel ? ` · ${radiusLabel}` : ""}`}
                   right={
-                    <div className="flex items-center gap-2">
-                      {g ? (
-                        <div className="hidden flex-wrap items-center gap-x-2 gap-y-1 sm:flex">
-                          {[
-                            { label: "Top 3", c: "bg-emerald-500" },
-                            { label: "Pack 4–10", c: "bg-amber-400" },
-                            { label: "11–20", c: "bg-teal" },
-                            { label: "NR", c: "bg-red-500" },
-                          ].map((x) => (
-                            <span key={x.label} className="flex items-center gap-1 text-[10px] text-rp-tlight">
-                              <span className={`inline-block h-2.5 w-2.5 rounded-sm ${x.c}`} />
-                              {x.label}
-                            </span>
-                          ))}
-                          <span className="text-[10px] text-rp-tlight">· red marker = pack competitor</span>
-                          <span className="text-[10px] text-rp-tlight">· blue marker = your business</span>
-                        </div>
-                      ) : null}
-                      <Link to="/map">
-                        <Button variant="outline" size="sm" type="button">
-                          Full Map →
-                        </Button>
-                      </Link>
-                    </div>
+                    <Link to="/map">
+                      <Button variant="outline" size="sm" type="button">
+                        Full Map →
+                      </Button>
+                    </Link>
                   }
                 />
                 <div className="p-4">
                   <LeafletVisibilityMap
                     suburbs={ranks.data?.suburbs ?? []}
                     companyPoint={companyMapPoint}
-                    competitorPins={ranks.data?.map_competitors ?? []}
-                    radiusKm={me.data?.search_radius_km ?? null}
-                    heightClass="h-[300px]"
+                    radiusKm={radiusKm}
+                    radiusLabel={radiusLabel}
+                    heightClass="h-[380px]"
                   />
                 </div>
               </Card>

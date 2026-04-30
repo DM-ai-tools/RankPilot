@@ -58,9 +58,20 @@ export function VisibilityMapPage() {
           lat: me.data.business_lat as number,
           lng: me.data.business_lng as number,
           label: me.data.business_name || "Your business",
+          address: me.data.business_address ?? null,
           locationSource: me.data.business_location_source ?? null,
         }
       : null;
+
+  const radiusKm = me.data?.search_radius_km ?? null;
+  const radiusLabel = radiusKm
+    ? radiusKm <= 5  ? `0–5 km (local block)`
+    : radiusKm <= 10 ? `6–10 km (local)`
+    : radiusKm <= 15 ? `11–15 km (suburb)`
+    : radiusKm <= 20 ? `16–20 km (greater metro)`
+    : radiusKm <= 25 ? `21–25 km (city-wide)`
+    : `26–30 km (regional)`
+    : null;
 
   const d = q.data;
 
@@ -170,33 +181,16 @@ export function VisibilityMapPage() {
               {/* Suburb Heat Map */}
               <Card>
                 <CardHeader
-                  title="Suburb Heat Map"
-                  subtitle={
-                    (d.map_competitors?.length ?? 0) > 0
-                      ? `Circles = your suburb ranks · competitor pins (${d.map_competitors.length}) · blue marker = your business`
-                      : "Circles = suburb ranks from last scan — run a new scan to store competitor pins (Google lat/lng via DataForSEO)"
-                  }
-                  right={
-                    <div className="flex flex-wrap gap-2">
-                      {[
-                        ["bg-emerald-500", "Top 3"],
-                        ["bg-amber-400",   "Pack 4–10"],
-                        ["bg-teal",        "Pack 11–20"],
-                        ["bg-red-500",     "Not visible"],
-                      ].map(([c, l]) => (
-                        <span key={l} className="flex items-center gap-1 text-[10px] text-rp-tlight">
-                          <span className={`inline-block h-2.5 w-2.5 rounded-sm ${c}`} />
-                          {l}
-                        </span>
-                      ))}
-                    </div>
-                  }
+                  title={`Visibility Map${d.keyword ? ` – '${d.keyword}'` : ""}`}
+                  subtitle={`${d.suburbs.length} suburbs${radiusLabel ? ` · ${radiusLabel}` : ""}`}
                 />
                 <div className="p-4">
                   <LeafletVisibilityMap
                     suburbs={d.suburbs}
                     companyPoint={companyPoint}
-                    competitorPins={d.map_competitors ?? []}
+                    radiusKm={radiusKm}
+                    radiusLabel={radiusLabel}
+                    heightClass="h-[460px]"
                   />
                 </div>
               </Card>
