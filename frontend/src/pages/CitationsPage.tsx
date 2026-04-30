@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useRef } from "react";
-import { CheckCircle2, XCircle } from "lucide-react";
+import { CheckCircle2 } from "lucide-react";
 
 import { fetchCitations, syncCitations } from "../api/citations";
 import { formatApiError } from "../api/client";
@@ -42,7 +42,7 @@ function SummaryCard({ label, value, color }: { label: string; value: number; co
 }
 
 /* ── Per-field wrong/correct renderer ─────────────────────────── */
-function WrongValueCell({ item, canonical }: { item: CitationRow; canonical: string }) {
+function WrongValueCell({ item, canonical: _canonical }: { item: CitationRow; canonical: string }) {
   if (item.status === "missing") {
     return <span className="text-red-500 italic">No listing found</span>;
   }
