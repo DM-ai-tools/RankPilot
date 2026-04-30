@@ -9,6 +9,7 @@ from datetime import UTC, datetime
 from uuid import UUID
 
 from sqlalchemy import text
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
@@ -369,16 +370,43 @@ async def _run_maps_scan_safe(job_id: str, client_id: str, payload: dict) -> Non
         await _update_job(job_id, "failed", error=str(exc))
 
 
+def _exception_walk(exc: BaseException) -> list[BaseException]:
+    """SQLAlchemy/asyncpg often wrap Errno 111 under OperationalError — walk causes and .orig."""
+    out: list[BaseException] = []
+    seen: set[int] = set()
+    stack: list[BaseException] = [exc]
+    while stack:
+        cur = stack.pop()
+        if cur is None or id(cur) in seen:
+            continue
+        seen.add(id(cur))
+        out.append(cur)
+        stack.append(cur.__cause__)  # type: ignore[arg-type]
+        ctx = getattr(cur, "__context__", None)
+        if isinstance(ctx, BaseException):
+            stack.append(ctx)
+        orig = getattr(cur, "orig", None)
+        if isinstance(orig, BaseException):
+            stack.append(orig)
+    return out
+
+
 def _is_transient_db_connect_error(exc: BaseException) -> bool:
     """True for TCP refused / timeouts so we log briefly instead of full traceback every poll."""
-    if isinstance(exc, (ConnectionRefusedError, TimeoutError, asyncio.TimeoutError)):
-        return True
-    if isinstance(exc, OSError) and getattr(exc, "errno", None) in (111, 110):  # refused, timeout
-        return True
-    cur: BaseException | None = exc
-    for _ in range(10):
-        if cur is None:
-            break
+    if isinstance(exc, OperationalError):
+        low = str(exc).lower()
+        if any(
+            x in low
+            for x in (
+                "connection refused",
+                "could not connect",
+                "timeout",
+                "name or service not known",
+                "errno 111",
+            )
+        ):
+            return True
+    for cur in _exception_walk(exc):
         if isinstance(cur, (ConnectionRefusedError, TimeoutError, asyncio.TimeoutError)):
             return True
         if isinstance(cur, OSError) and getattr(cur, "errno", None) in (111, 110):
@@ -386,7 +414,6 @@ def _is_transient_db_connect_error(exc: BaseException) -> bool:
         msg = str(cur).lower()
         if "connection refused" in msg or "cannot connect" in msg or "name or service not known" in msg:
             return True
-        cur = cur.__cause__ or getattr(cur, "orig", None)
     return False
 
 
