@@ -1,4 +1,4 @@
-﻿import { useQuery } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 import { Megaphone, MessageCircleQuestion, MapPin, ShieldCheck } from "lucide-react";
 
 import { fetchGbpActivity } from "../api/gbp";

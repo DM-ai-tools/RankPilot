@@ -1,4 +1,4 @@
-﻿import { apiGet, apiPatchJson, apiPostJson } from "./client";
+import { apiGet, apiPatchJson, apiPostJson } from "./client";
 
 export type ClientProfile = {
   client_id: string;

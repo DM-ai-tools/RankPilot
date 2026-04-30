@@ -1,4 +1,4 @@
-﻿import type { ReactNode } from "react";
+import type { ReactNode } from "react";
 
 /* Matches mockup .card: 10px radius, 1px border, white bg, bottom margin */
 export function Card({ className = "", children }: { className?: string; children: ReactNode }) {

@@ -1,4 +1,4 @@
-﻿/**
+/**
  * Central HTTP client — components use TanStack Query hooks that call these helpers.
  * Do not call fetch() directly from UI components.
  */

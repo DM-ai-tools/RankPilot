@@ -12,12 +12,24 @@ from app.db.schema_bootstrap import (
     ensure_rp_clients_search_radius,
     ensure_rp_suburb_grid_client_index,
 )
-from app.db.session import configure_engine, dispose_engine
+from sqlalchemy import text
+
+from app.db.session import configure_engine, dispose_engine, session_maker
 from app.routes.v1 import api_router
 from app.workers.maps_worker import poll_and_run_jobs
 from app.workers.scheduler import register_jobs, scheduler
 
 logger = logging.getLogger(__name__)
+
+
+async def _core_schema_ready() -> bool:
+    """True once infra/sql migrations have been applied (rp_jobs exists)."""
+    try:
+        async with session_maker()() as s:
+            r = await s.execute(text("SELECT to_regclass('public.rp_jobs')"))
+            return r.scalar() is not None
+    except Exception:
+        return False
 
 
 def _cors_allow_origins(settings) -> list[str]:
@@ -39,18 +51,21 @@ def _cors_allow_origin_regex(settings) -> str | None:
 async def lifespan(_app: FastAPI):
     settings = get_settings()
     configure_engine(settings.database_url, echo=settings.debug)
-    try:
-        await ensure_rp_clients_search_radius()
-    except Exception:
-        logger.exception("Schema bootstrap: search_radius_km (see infra/sql/009_search_radius.sql)")
-    try:
-        await ensure_rp_clients_nap_columns()
-    except Exception:
-        logger.exception("Schema bootstrap: business NAP columns (see infra/sql/011_business_nap.sql)")
-    try:
-        await ensure_rp_suburb_grid_client_index()
-    except Exception:
-        logger.exception("Schema bootstrap: suburb grid index (see infra/sql/010_perf_indexes.sql)")
+
+    schema_ok = await _core_schema_ready()
+    if schema_ok:
+        try:
+            await ensure_rp_clients_search_radius()
+        except Exception:
+            logger.exception("Schema bootstrap: search_radius_km (see infra/sql/009_search_radius.sql)")
+        try:
+            await ensure_rp_clients_nap_columns()
+        except Exception:
+            logger.exception("Schema bootstrap: business NAP columns (see infra/sql/011_business_nap.sql)")
+        try:
+            await ensure_rp_suburb_grid_client_index()
+        except Exception:
+            logger.exception("Schema bootstrap: suburb grid index (see infra/sql/010_perf_indexes.sql)")
 
     s = get_settings()
     if str(s.dataforseo_login or "").strip() and str(s.dataforseo_password or "").strip():
@@ -61,30 +76,40 @@ async def lifespan(_app: FastAPI):
             "(aliases: DATAFORSEO_API_LOGIN / DATAFORSEO_API_PASSWORD)."
         )
 
-    # Reset any jobs left in 'running' from a previous hot-reload / crash.
-    # Without this, uvicorn --reload restarts leave jobs stuck forever.
-    try:
-        from app.db.session import session_maker
-        from sqlalchemy import text as _text
-        async with session_maker()() as _s:
-            await _s.execute(_text("SET LOCAL row_security = off"))
-            res = await _s.execute(
-                _text("UPDATE rp_jobs SET status='queued', updated_at=now() WHERE status='running'")
-            )
-            await _s.commit()
-            if res.rowcount:
-                logger.warning("Recovered %d interrupted maps_scan job(s) (status reset to queued)", res.rowcount)
-    except Exception:
-        logger.exception("Job recovery step failed (non-fatal)")
+    if not schema_ok:
+        logger.error(
+            "PostgreSQL is reachable but RankPilot tables are missing (fresh database). "
+            "Railway → this service → Shell, then run exactly:  python scripts/apply_migrations.py  "
+            "After it finishes, redeploy or restart the service. "
+            "Scheduler is OFF until then so logs are not spammed."
+        )
+    else:
+        # Reset any jobs left in 'running' from a previous hot-reload / crash.
+        try:
+            async with session_maker()() as _s:
+                await _s.execute(text("SET LOCAL row_security = off"))
+                res = await _s.execute(
+                    text("UPDATE rp_jobs SET status='queued', updated_at=now() WHERE status='running'")
+                )
+                await _s.commit()
+                if res.rowcount:
+                    logger.warning(
+                        "Recovered %d interrupted maps_scan job(s) (status reset to queued)", res.rowcount
+                    )
+        except Exception:
+            logger.exception("Job recovery step failed (non-fatal)")
 
-    register_jobs()
-    scheduler.start()
-    try:
-        await poll_and_run_jobs()
-    except Exception:
-        logger.exception("Initial maps_scan job poll failed (scheduler will retry)")
+        register_jobs()
+        scheduler.start()
+        try:
+            await poll_and_run_jobs()
+        except Exception:
+            logger.exception("Initial maps_scan job poll failed (scheduler will retry)")
     yield
-    scheduler.shutdown(wait=False)
+    try:
+        scheduler.shutdown(wait=False)
+    except Exception:
+        pass
     await dispose_engine()
 
 
@@ -99,6 +124,18 @@ def create_app() -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
+    @app.get("/", tags=["health"])
+    async def root() -> dict[str, str]:
+        """Public URL often hits `/` in browsers — API lives under /api/v1 and /docs."""
+        return {
+            "service": settings.app_name,
+            "health": "/health",
+            "openapi": "/openapi.json",
+            "docs": "/docs",
+            "api": settings.api_v1_prefix,
+            "hint": "404 on / alone was normal before this route; use /docs or /api/v1 for the app.",
+        }
+
     @app.get("/health", tags=["health"])
     async def health_root() -> dict[str, str]:
         return {"status": "ok"}

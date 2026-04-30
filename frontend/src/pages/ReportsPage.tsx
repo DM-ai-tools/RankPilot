@@ -1,4 +1,4 @@
-﻿import { useQuery } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 import { FileText, FilePenLine, Link2, Map, MapPin } from "lucide-react";
 
 import { fetchMonthlyReports } from "../api/reports";

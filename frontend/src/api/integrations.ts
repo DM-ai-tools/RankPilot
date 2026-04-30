@@ -1,4 +1,4 @@
-﻿import { apiDelete, apiGet, apiPostJson } from "./client";
+import { apiDelete, apiGet, apiPostJson } from "./client";
 
 export type IntegrationStatus = {
   connected: boolean;

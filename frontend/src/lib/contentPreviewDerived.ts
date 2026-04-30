@@ -1,4 +1,4 @@
-﻿/**
+/**
  * Derives preview sections and SEO-ish signals from draft markdown only.
  * No business-keyword literals — detection is structural / pattern-based.
  */

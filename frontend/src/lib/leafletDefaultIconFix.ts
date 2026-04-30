@@ -1,4 +1,4 @@
-﻿/**
+/**
  * Leaflet + Vite: default marker images resolve to wrong URLs unless overridden.
  * Same pattern as SERPMapper VisibilityMap — keeps `L.marker` / default `Marker` icons visible.
  */

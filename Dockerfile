@@ -6,8 +6,10 @@ WORKDIR /app
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1
 
+# postgresql-client provides `psql` so `python scripts/apply_migrations.py` works in Railway Shell.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libpq5 \
+    postgresql-client \
     && rm -rf /var/lib/apt/lists/*
 
 COPY backend/pyproject.toml /app/pyproject.toml
