@@ -265,7 +265,7 @@ export function OnboardingPage() {
   const [businessUrl, setUrl]        = useState("");
   const [keyword,     setKeyword]    = useState("");
   const [city,        setCity]       = useState("");
-  const [radius,      setRadius]     = useState("25");
+  const [radius,      setRadius]     = useState("20");
   const [showWpModal, setShowWpModal]= useState(false);
   const [showGscModal, setShowGscModal] = useState(false);
   const [showGbpModal, setShowGbpModal] = useState(false);
@@ -490,8 +490,55 @@ export function OnboardingPage() {
               <Field label="Main City / Suburb">
                 <input type="text" required style={INPUT} placeholder="e.g. Melbourne, Brisbane, Sydney" value={city} onChange={e=>setCity(e.target.value)} />
               </Field>
-              <Field label="Search Radius (km)" hint="RankPilot will track your Google Maps rankings across all suburbs within this radius.">
-                <input type="number" min={5} max={100} required style={INPUT} placeholder="25" value={radius} onChange={e=>setRadius(e.target.value)} />
+              <Field label="Service radius" hint="We scan suburbs inside this distance — categorised for reporting.">
+                {(() => {
+                  const BANDS = [
+                    { label: "0–5 km (local block)",    max: 5  },
+                    { label: "6–10 km (local)",          max: 10 },
+                    { label: "11–15 km (suburb)",        max: 15 },
+                    { label: "16–20 km (greater metro)", max: 20 },
+                    { label: "21–25 km (city-wide)",     max: 25 },
+                    { label: "26–30 km (regional)",      max: 30 },
+                  ];
+                  const pill = (label: string, max: number) => {
+                    const active = Number(radius) === max;
+                    return (
+                      <button
+                        key={max}
+                        type="button"
+                        onClick={() => setRadius(String(max))}
+                        style={{
+                          padding: "4px 10px",
+                          borderRadius: 20,
+                          border: active ? "none" : "1px solid #D1D5DB",
+                          background: active ? "#72C219" : "#F9FAFB",
+                          color: active ? "#fff" : "#374151",
+                          fontSize: 12,
+                          fontWeight: active ? 700 : 500,
+                          cursor: "pointer",
+                        }}
+                      >
+                        {label.split(" ")[0]}
+                      </button>
+                    );
+                  };
+                  return (
+                    <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                      <select
+                        value={radius}
+                        onChange={e => setRadius(e.target.value)}
+                        style={{ ...INPUT, cursor: "pointer" }}
+                      >
+                        {BANDS.map(b => (
+                          <option key={b.max} value={String(b.max)}>{b.label}</option>
+                        ))}
+                      </select>
+                      <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                        {BANDS.map(b => pill(b.label, b.max))}
+                      </div>
+                    </div>
+                  );
+                })()}
               </Field>
               {save.isError && <p style={{ color:"#DC2626", fontSize:12, marginBottom:8 }}>{(save.error as Error).message}</p>}
               <button type="submit" disabled={save.isPending||!businessUrl.trim()||!keyword.trim()||!city.trim()} style={{ ...CTA_BASE, opacity:save.isPending?0.6:1 }}>
