@@ -160,9 +160,16 @@ def _verify_state(state: str) -> dict:
 
 # ── Helpers ────────────────────────────────────────────────────────────
 
+_GOOGLE_OAUTH_CALLBACK_PATH = "/api/v1/integrations/google/callback"
+
+
 def _redirect_uri() -> str:
-    base = (_cfg().google_redirect_base_url or "http://localhost:8000").rstrip("/")
-    return f"{base}/api/v1/integrations/google/callback"
+    """OAuth redirect URI sent to Google (must match Cloud Console exactly)."""
+    base = (_cfg().google_redirect_base_url or "http://localhost:8000").strip().rstrip("/")
+    # Accept either base URL or full callback URL in GOOGLE_REDIRECT_BASE_URL.
+    if base.endswith(_GOOGLE_OAUTH_CALLBACK_PATH):
+        return base
+    return f"{base}{_GOOGLE_OAUTH_CALLBACK_PATH}"
 
 
 def _popup_result_html(success: bool, integration_type: str, error: str = "") -> str:

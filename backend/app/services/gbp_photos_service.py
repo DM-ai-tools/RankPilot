@@ -104,7 +104,11 @@ def _public_api_base(settings: Settings | None = None) -> str:
     explicit = (s.public_api_base_url or "").strip()
     if explicit:
         return explicit.rstrip("/")
-    return (s.google_redirect_base_url or "http://localhost:8000").strip().rstrip("/")
+    base = (s.google_redirect_base_url or "http://localhost:8000").strip().rstrip("/")
+    callback = "/api/v1/integrations/google/callback"
+    if base.endswith(callback):
+        base = base[: -len(callback)].rstrip("/")
+    return base
 
 
 def _google_can_fetch_publish_url(settings: Settings | None = None) -> bool:
