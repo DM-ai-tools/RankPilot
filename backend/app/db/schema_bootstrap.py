@@ -130,3 +130,36 @@ async def ensure_rp_gbp_brand_kit_table() -> None:
         )
         await session.commit()
     logger.info("Schema check: rp_gbp_brand_kit present")
+
+
+async def ensure_rp_ahrefs_keyword_cache_table() -> None:
+    """Matches infra/sql/016_ahrefs_keyword_cache.sql."""
+    maker = session_maker()
+    async with maker() as session:
+        await session.execute(
+            text(
+                """
+                CREATE TABLE IF NOT EXISTS rp_ahrefs_keyword_cache (
+                  cache_key   TEXT PRIMARY KEY,
+                  client_id   UUID REFERENCES rp_clients(client_id) ON DELETE CASCADE,
+                  payload     JSONB NOT NULL,
+                  fetched_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+                  expires_at  TIMESTAMPTZ NOT NULL
+                )
+                """
+            )
+        )
+        await session.execute(
+            text(
+                "CREATE INDEX IF NOT EXISTS idx_ahrefs_keyword_cache_expires "
+                "ON rp_ahrefs_keyword_cache (expires_at)"
+            )
+        )
+        await session.execute(
+            text(
+                "CREATE INDEX IF NOT EXISTS idx_ahrefs_keyword_cache_client "
+                "ON rp_ahrefs_keyword_cache (client_id) WHERE client_id IS NOT NULL"
+            )
+        )
+        await session.commit()
+    logger.info("Schema check: rp_ahrefs_keyword_cache present")

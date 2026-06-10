@@ -317,6 +317,7 @@ class OverviewService:
                     metro=metro,
                 )
             except Exception:
+                await session.rollback()
                 keyword_volumes = [
                     KeywordVolumeRow(keyword=kw, monthly_searches=0) for kw in lookup_keywords
                 ]

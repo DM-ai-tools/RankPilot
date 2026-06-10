@@ -13,6 +13,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.core.config import get_settings
 from app.db.schema_bootstrap import (
+    ensure_rp_ahrefs_keyword_cache_table,
     ensure_rp_clients_location_scope,
     ensure_rp_clients_nap_columns,
     ensure_rp_clients_search_radius,
@@ -159,6 +160,12 @@ async def lifespan(_app: FastAPI):
             await ensure_rp_gbp_brand_kit_table()
         except Exception:
             logger.exception("Schema bootstrap: rp_suburb_geo (see infra/sql/015_suburb_geo.sql)")
+        try:
+            await ensure_rp_ahrefs_keyword_cache_table()
+        except Exception:
+            logger.exception(
+                "Schema bootstrap: rp_ahrefs_keyword_cache (see infra/sql/016_ahrefs_keyword_cache.sql)"
+            )
 
     s = get_settings()
     if str(s.dataforseo_login or "").strip() and str(s.dataforseo_password or "").strip():

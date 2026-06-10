@@ -15,6 +15,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 AHREFS_CACHE_TTL_HOURS = 24
 
 
+async def _recover_session_after_db_error(session: AsyncSession) -> None:
+    """PostgreSQL aborts the whole transaction after one failed statement."""
+    try:
+        await session.rollback()
+    except Exception:
+        pass
+
+
 def normalize_keyword(keyword: str) -> str:
     return re.sub(r"\s+", " ", (keyword or "").strip().lower())
 
@@ -56,6 +64,7 @@ async def get_ahrefs_cache(
             )
         ).mappings().first()
     except Exception:
+        await _recover_session_after_db_error(session)
         return None, None, None
 
     if not row:
@@ -110,7 +119,7 @@ async def set_ahrefs_cache(
         )
         await session.flush()
     except Exception:
-        pass
+        await _recover_session_after_db_error(session)
 
 
 def cache_timestamps_iso(
@@ -134,4 +143,5 @@ async def purge_expired_ahrefs_cache(session: AsyncSession) -> int:
         )
         return len(result.all())
     except Exception:
+        await _recover_session_after_db_error(session)
         return 0
