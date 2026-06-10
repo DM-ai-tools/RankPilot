@@ -1,12 +1,12 @@
-﻿import type { ReactNode } from "react";
+import type { ReactNode } from "react";
 
 const styles = {
-  green: "bg-emerald-500/10 text-emerald-600",
-  amber: "bg-amber-500/10 text-amber-700",
-  red: "bg-red-500/10 text-red-600",
-  blue: "bg-navy-mid/10 text-navy-mid",
-  teal: "bg-teal/10 text-teal",
-  orange: "bg-[#72C219]/12 text-[#72C219]",
+  green: "bg-success/10 text-success",
+  amber: "bg-warn/10 text-warn",
+  red: "bg-danger/10 text-danger",
+  blue: "bg-info/10 text-info",
+  teal: "bg-success/10 text-success",
+  orange: "bg-brand-50 text-brand-700",
 } as const;
 
 type Tone = keyof typeof styles;

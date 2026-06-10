@@ -1,13 +1,18 @@
 import { useQuery } from "@tanstack/react-query";
-import { FileText, FilePenLine, Link2, Map, MapPin } from "lucide-react";
+import { Download, FileText, FilePenLine, Link2, Map, MapPin } from "lucide-react";
+import { useState } from "react";
 
-import { fetchMonthlyReports } from "../api/reports";
+import { formatApiError } from "../api/client";
+import { downloadMonthlyReportPdf, fetchMonthlyReports } from "../api/reports";
 import { useAuthStore } from "../stores/authStore";
 import type { MonthlyReport } from "../api/types";
 import { TopBar } from "../components/layout/TopBar";
 import { Card, CardHeader } from "../components/ui/Card";
 
 function ReportCard({ report }: { report: MonthlyReport }) {
+  const [downloading, setDownloading] = useState(false);
+  const [downloadError, setDownloadError] = useState<string | null>(null);
+
   const month = new Date(report.month + "T00:00:00").toLocaleDateString("en-AU", {
     month: "long",
     year: "numeric",
@@ -19,16 +24,16 @@ function ReportCard({ report }: { report: MonthlyReport }) {
 
   return (
     <Card>
-      <div className="bg-navy px-6 py-4">
+      <div className="bg-ink-900 px-6 py-4">
         <div className="flex items-start justify-between">
           <div>
-            <div className="text-[18px] font-extrabold text-white">Monthly SEO Report</div>
-            <div className="mt-0.5 text-[12px] text-slate-400">{month}</div>
+            <div className="text-lg font-extrabold text-white">Monthly SEO Report</div>
+            <div className="mt-0.5 text-xs text-neutral-400">{month}</div>
           </div>
           <div className="text-right">
-            <div className="text-[10px] text-slate-400">Powered by</div>
-            <div className="text-[14px] font-extrabold text-white">
-              Rank<span className="text-[#72C219]">Pilot</span>
+            <div className="text-[10px] text-neutral-400">Powered by</div>
+            <div className="text-sm font-extrabold text-white">
+              Rank<span className="text-brand-400">Pilot</span>
             </div>
           </div>
         </div>
@@ -46,7 +51,7 @@ function ReportCard({ report }: { report: MonthlyReport }) {
               delta: report.top3_start != null && report.top3_end != null
                 ? `from ${report.top3_start}`
                 : null,
-              deltaColor: "text-slate-400",
+              deltaColor: "text-neutral-400",
             },
             {
               label: "New Reviews",
@@ -62,8 +67,8 @@ function ReportCard({ report }: { report: MonthlyReport }) {
             },
           ].map((s) => (
             <div key={s.label} className="rounded-lg bg-white/[0.07] px-3 py-2.5 text-center">
-              <div className="text-[9px] font-bold uppercase tracking-wide text-slate-400">{s.label}</div>
-              <div className="mt-1 text-[24px] font-black text-amber-400">{s.value}</div>
+              <div className="text-[11px] font-semibold uppercase tracking-[0.06em] text-neutral-400">{s.label}</div>
+              <div className="mt-1 text-2xl font-black tabular-nums text-warn">{s.value}</div>
               {s.delta ? <div className={`text-[10px] font-semibold ${s.deltaColor}`}>{s.delta}</div> : null}
             </div>
           ))}
@@ -75,18 +80,32 @@ function ReportCard({ report }: { report: MonthlyReport }) {
           <p className="mt-1 text-[13px] leading-relaxed text-rp-tmid">{report.narrative_text}</p>
         </div>
       ) : null}
-      {report.pdf_url ? (
-        <div className="border-t border-rp-border px-6 py-3">
-          <a
-            href={report.pdf_url}
-            target="_blank"
-            rel="noreferrer"
-            className="text-[12px] font-semibold text-[#72C219] hover:underline"
-          >
-            ↓ Download PDF
-          </a>
-        </div>
-      ) : null}
+      <div className="border-t border-rp-border px-6 py-3">
+        <button
+          type="button"
+          disabled={downloading}
+          onClick={() => {
+            setDownloadError(null);
+            setDownloading(true);
+            void downloadMonthlyReportPdf(report.month)
+              .then(({ blob, filename }) => {
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement("a");
+                a.href = url;
+                a.download = filename;
+                a.click();
+                URL.revokeObjectURL(url);
+              })
+              .catch((err) => setDownloadError(formatApiError(err)))
+              .finally(() => setDownloading(false));
+          }}
+          className="inline-flex items-center gap-1.5 text-[12px] font-semibold text-[#72C219] hover:underline disabled:opacity-50"
+        >
+          <Download className="h-3.5 w-3.5" />
+          {downloading ? "Preparing PDF…" : "Download PDF"}
+        </button>
+        {downloadError ? <p className="mt-1 text-[11px] text-red-600">{downloadError}</p> : null}
+      </div>
     </Card>
   );
 }
@@ -108,7 +127,7 @@ export function ReportsPage() {
         title="Monthly SEO Report"
         subtitle="Auto-generated on the 1st of each month — visibility, content, citations"
       />
-      <div className="flex-1 overflow-y-auto bg-rp-light px-7 py-6">
+      <div className="page-scroll">
         {reports.isLoading ? (
           <p className="text-sm text-rp-tlight">Loading reports…</p>
         ) : reports.isError ? (
@@ -123,9 +142,8 @@ export function ReportsPage() {
               </div>
               <div className="text-sm font-semibold text-navy">No reports yet</div>
               <p className="max-w-sm text-xs text-rp-tlight">
-                Your first monthly report will be auto-generated at the end of your first complete tracking
-                month. It will include visibility score trends, content published, citations fixed, and
-                recommended actions for the next month.
+                Reports appear after your first Maps scan or published content. Run a scan from the Dashboard,
+                then check back — each month with activity gets a visibility summary here.
               </p>
             </div>
           </Card>

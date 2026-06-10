@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
 
@@ -9,6 +10,7 @@ import { TopBar } from "../components/layout/TopBar";
 import { Button } from "../components/ui/Button";
 import { Card, CardHeader } from "../components/ui/Card";
 import { MetricCard } from "../components/ui/MetricCard";
+import { getStoredScanJobId, useActiveScanPolling } from "../hooks/useScanPolling";
 import { useAuthStore } from "../stores/authStore";
 import { visibilityScoreFromSuburbs } from "../lib/scoring";
 
@@ -37,11 +39,14 @@ function RankBadge({ rank }: { rank: number | null }) {
 
 export function VisibilityMapPage() {
   const token = useAuthStore((s) => s.accessToken);
+  const [activeJobId] = useState<string | null>(() => getStoredScanJobId());
+  const { isScanning, progress: scanProgress } = useActiveScanPolling(activeJobId);
 
   const q = useQuery({
     queryKey: ["ranks", "suburbs", token],
     queryFn:  fetchSuburbRanks,
     enabled:  Boolean(token),
+    refetchInterval: isScanning ? 5_000 : false,
   });
   const me = useQuery({
     queryKey: ["me", token],
@@ -97,7 +102,7 @@ export function VisibilityMapPage() {
         }
       />
 
-      <div className="flex-1 overflow-y-auto bg-rp-light px-5 py-[18px]">
+      <div className="page-scroll px-5 py-7">
 
         {!token ? (
           <p className="text-sm text-rp-tmid">
@@ -188,9 +193,11 @@ export function VisibilityMapPage() {
                   <LeafletVisibilityMap
                     suburbs={d.suburbs}
                     companyPoint={companyPoint}
+                    competitorPins={d.map_competitors}
                     radiusKm={radiusKm}
                     radiusLabel={radiusLabel}
                     heightClass="h-[460px]"
+                    scanProgress={scanProgress}
                   />
                 </div>
               </Card>

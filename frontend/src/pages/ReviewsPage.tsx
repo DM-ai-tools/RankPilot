@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Bot,
   ChevronDown,
@@ -15,6 +15,7 @@ import {
 import { fetchCompetitorVelocity, fetchReviewsSummary } from "../api/reviews";
 import { formatApiError } from "../api/client";
 import { TopBar } from "../components/layout/TopBar";
+import { Button } from "../components/ui/Button";
 import { Card, CardHeader } from "../components/ui/Card";
 import { useAuthStore } from "../stores/authStore";
 import type { ReviewItemRow } from "../api/types";
@@ -139,21 +140,37 @@ function competitorColor(myRate: number, theirRate: number): string {
   return "#6B7280";                                  // slower → grey
 }
 
+const REVIEWS_STALE_MS = 24 * 60 * 60 * 1000;
+
 /* ── Main page ────────────────────────────────────────────────── */
 export function ReviewsPage() {
   const token = useAuthStore((s) => s.accessToken);
+  const qc = useQueryClient();
+
   const q = useQuery({
     queryKey: ["reviews", "summary", token],
-    queryFn: fetchReviewsSummary,
+    queryFn: () => fetchReviewsSummary(),
     enabled: Boolean(token),
-    staleTime: 60_000,
+    staleTime: REVIEWS_STALE_MS,
+    gcTime: REVIEWS_STALE_MS,
+    refetchOnMount: false,
+    refetchOnWindowFocus: false,
+  });
+
+  const refreshReviews = useMutation({
+    mutationFn: () => fetchReviewsSummary(true),
+    onSuccess: (data) => {
+      qc.setQueryData(["reviews", "summary", token], data);
+    },
   });
 
   const cv = useQuery({
     queryKey: ["reviews", "competitors", token],
     queryFn: fetchCompetitorVelocity,
     enabled: Boolean(token),
-    staleTime: 5 * 60_000,
+    staleTime: REVIEWS_STALE_MS,
+    refetchOnMount: false,
+    refetchOnWindowFocus: false,
   });
 
   const d = q.data;
@@ -179,14 +196,55 @@ export function ReviewsPage() {
   const fastest   = realCompetitors.reduce((a, b) => (a.rate > b.rate ? a : b), { rate: 0, label: "" });
   const hasGap    = fastest.rate > yourMonthly;
   const noScanData = !cv.isLoading && (cv.data?.competitors ?? []).length === 0;
+  const isLiveFetch =
+    (q.isLoading && !q.data) || refreshReviews.isPending || (q.isFetching && !d?.from_cache);
+
+  const cacheLabel =
+    d?.cache_expires_at
+      ? `Cached until ${new Date(d.cache_expires_at).toLocaleString("en-AU")}`
+      : d?.fetched_at
+        ? `Last fetched ${new Date(d.fetched_at).toLocaleString("en-AU")}`
+        : null;
 
   return (
     <>
       <TopBar
         title="Review Velocity"
         subtitle="Google reviews from your listing (DataForSEO Business Data API)"
+        actions={
+          <Button
+            size="sm"
+            variant="outline"
+            type="button"
+            disabled={!token || refreshReviews.isPending || isLiveFetch}
+            onClick={() => void refreshReviews.mutate()}
+          >
+            {refreshReviews.isPending || (q.isFetching && refreshReviews.isPending)
+              ? "Refreshing…"
+              : "↻ Refresh reviews"}
+          </Button>
+        }
       />
-      <div className="flex-1 overflow-y-auto bg-rp-light px-7 py-6">
+      <div className="page-scroll">
+
+        {isLiveFetch && (
+          <div className="mb-4 rounded-lg border border-[#C2E0FF] bg-[#F8FAFC] px-4 py-3 text-sm text-rp-tmid">
+            Loading reviews from Google via DataForSEO — this can take up to 90 seconds on first load.
+          </div>
+        )}
+
+        {q.isSuccess && d && !isLiveFetch && cacheLabel && (
+          <div className="mb-4 rounded-lg border border-[#CEEAD6] bg-[#F6FFF8] px-4 py-2.5 text-[12px] text-[#1E6B37]">
+            {d.from_cache ? "Showing cached reviews (24h). " : ""}
+            {cacheLabel}
+          </div>
+        )}
+
+        {q.isSuccess && d?.message && (
+          <div className="mb-4 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+            {d.message}
+          </div>
+        )}
 
         {/* ── KPI cards ───────────────────────────────────────── */}
         <div className="mb-6 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
@@ -194,26 +252,26 @@ export function ReviewsPage() {
             {
               label: "Total Reviews",
               icon: Star,
-              value: q.isLoading ? "..." : fmtNum(total),
+              value: q.isLoading && !q.data ? "..." : fmtNum(total),
               desc: "on Google",
             },
             {
               label: "Average Rating",
               icon: Trophy,
-              value: q.isLoading ? "..." : fmtRating(avg),
+              value: q.isLoading && !q.data ? "..." : fmtRating(avg),
               desc: "Out of 5.0",
               star: true,
             },
             {
               label: "New This Month",
               icon: TrendingUp,
-              value: q.isLoading ? "..." : String(newMo),
+              value: q.isLoading && !q.data ? "..." : String(newMo),
               desc: newMo >= 4 ? "Target: 4+ ✓" : "Target: 4+",
             },
             {
               label: "Reviews Loaded",
               icon: ListChecks,
-              value: q.isLoading ? "..." : String(batch),
+              value: q.isLoading && !q.data ? "..." : String(batch),
               desc: "Recent rows from DataForSEO",
             },
           ].map((s) => (
@@ -323,7 +381,7 @@ export function ReviewsPage() {
           <Card>
             <CardHeader title="Recent Reviews + AI Responses" />
 
-            {q.isLoading && (
+            {q.isLoading && !q.data && (
               <div className="flex flex-col items-center justify-center gap-2 px-6 py-14 text-center text-sm text-rp-tlight">
                 Loading reviews...
               </div>

@@ -1,7 +1,7 @@
 """
 Curated AU suburb lists by metro label (city).
 Used to seed rp_suburb_grid on onboarding.
-Extend with real postcode DB later; this covers the top ~25 suburbs per major metro.
+Extend with real postcode DB later. Melbourne uses ~150 suburbs in `melbourne_suburbs.py`.
 """
 
 from __future__ import annotations
@@ -9,34 +9,10 @@ from __future__ import annotations
 import math
 from typing import Mapping, Sequence
 
+from app.data.melbourne_suburbs import MELBOURNE_SUBURBS
+
 METRO_SUBURBS: dict[str, list[dict]] = {
-    "Melbourne, VIC": [
-        {"suburb": "Melbourne CBD",  "state": "VIC", "postcode": "3000", "lat": -37.8136, "lng": 144.9631, "population": 28000},
-        {"suburb": "South Yarra",    "state": "VIC", "postcode": "3141", "lat": -37.8390, "lng": 144.9930, "population": 25000},
-        {"suburb": "St Kilda",       "state": "VIC", "postcode": "3182", "lat": -37.8610, "lng": 144.9810, "population": 22000},
-        {"suburb": "Fitzroy",        "state": "VIC", "postcode": "3065", "lat": -37.7990, "lng": 144.9780, "population": 15000},
-        {"suburb": "Richmond",       "state": "VIC", "postcode": "3121", "lat": -37.8180, "lng": 145.0020, "population": 32000},
-        {"suburb": "Collingwood",    "state": "VIC", "postcode": "3066", "lat": -37.8040, "lng": 144.9870, "population": 12000},
-        {"suburb": "Footscray",      "state": "VIC", "postcode": "3011", "lat": -37.8000, "lng": 144.9000, "population": 91000},
-        {"suburb": "Northcote",      "state": "VIC", "postcode": "3070", "lat": -37.7700, "lng": 145.0000, "population": 45000},
-        {"suburb": "Essendon",       "state": "VIC", "postcode": "3040", "lat": -37.7600, "lng": 144.9200, "population": 110000},
-        {"suburb": "Williamstown",   "state": "VIC", "postcode": "3016", "lat": -37.8600, "lng": 144.8900, "population": 28000},
-        {"suburb": "Brunswick",      "state": "VIC", "postcode": "3056", "lat": -37.7680, "lng": 144.9620, "population": 27000},
-        {"suburb": "Prahran",        "state": "VIC", "postcode": "3181", "lat": -37.8510, "lng": 144.9870, "population": 14000},
-        {"suburb": "Preston",        "state": "VIC", "postcode": "3072", "lat": -37.7450, "lng": 145.0030, "population": 40000},
-        {"suburb": "Hawthorn",       "state": "VIC", "postcode": "3122", "lat": -37.8230, "lng": 145.0340, "population": 22000},
-        {"suburb": "Glen Waverley",  "state": "VIC", "postcode": "3150", "lat": -37.8780, "lng": 145.1640, "population": 47000},
-        {"suburb": "Doncaster",      "state": "VIC", "postcode": "3108", "lat": -37.7880, "lng": 145.1260, "population": 21000},
-        {"suburb": "Box Hill",       "state": "VIC", "postcode": "3128", "lat": -37.8210, "lng": 145.1240, "population": 22000},
-        {"suburb": "Frankston",      "state": "VIC", "postcode": "3199", "lat": -38.1460, "lng": 145.1240, "population": 40000},
-        {"suburb": "Dandenong",      "state": "VIC", "postcode": "3175", "lat": -37.9870, "lng": 145.2140, "population": 37000},
-        {"suburb": "Ringwood",       "state": "VIC", "postcode": "3134", "lat": -37.8160, "lng": 145.2270, "population": 18000},
-        {"suburb": "Werribee",       "state": "VIC", "postcode": "3030", "lat": -37.8990, "lng": 144.6640, "population": 41000},
-        {"suburb": "Craigieburn",    "state": "VIC", "postcode": "3064", "lat": -37.6020, "lng": 144.9420, "population": 55000},
-        {"suburb": "Sunshine",       "state": "VIC", "postcode": "3020", "lat": -37.7900, "lng": 144.8310, "population": 20000},
-        {"suburb": "Hoppers Crossing","state": "VIC","postcode": "3029", "lat": -37.8820, "lng": 144.7010, "population": 33000},
-        {"suburb": "Tarneit",        "state": "VIC", "postcode": "3029", "lat": -37.8580, "lng": 144.6680, "population": 48000},
-    ],
+    "Melbourne, VIC": MELBOURNE_SUBURBS,
     "Sydney, NSW": [
         {"suburb": "Sydney CBD",     "state": "NSW", "postcode": "2000", "lat": -33.8688, "lng": 151.2093, "population": 25000},
         {"suburb": "Parramatta",     "state": "NSW", "postcode": "2150", "lat": -33.8148, "lng": 151.0017, "population": 32000},
@@ -152,9 +128,58 @@ def filter_suburbs_by_radius_km(
     return out
 
 
-def get_suburbs_for_metro(metro_label: str, *, radius_km: int | None = None) -> list[dict]:
-    """Return suburbs for a metro within radius_km of that metro's CBD (default 25 km)."""
-    r = max(5, min(150, int(radius_km or 25)))
+def filter_suburbs_from_center(
+    suburbs: Sequence[Mapping[str, object]],
+    center_lat: float,
+    center_lng: float,
+    radius_km: int,
+) -> list[dict]:
+    """Keep suburbs within radius_km of a given lat/lng anchor."""
+    rmax = max(5, min(150, int(radius_km)))
+    out: list[dict] = []
+    for s in suburbs:
+        try:
+            la = float(s["lat"])  # type: ignore[arg-type]
+            lo = float(s["lng"])  # type: ignore[arg-type]
+        except (TypeError, ValueError, KeyError):
+            continue
+        if haversine_km(center_lat, center_lng, la, lo) <= rmax:
+            out.append(dict(s))
+    if not out and suburbs:
+        return [dict(suburbs[0])]
+    return out
+
+
+def get_suburbs_for_metro(
+    metro_label: str,
+    *,
+    radius_km: int | None = None,
+    location_scope: str = "suburb",
+    primary_suburb: str | None = None,
+) -> list[dict]:
+    """Return suburbs for onboarding grid seeding."""
     key = resolve_metro_key(metro_label)
     suburbs = list(METRO_SUBURBS[key])
+    scope = (location_scope or "suburb").strip().lower()
+    if scope == "city":
+        return suburbs
+    r = max(5, min(150, int(radius_km or 25)))
+    anchor = (primary_suburb or "").strip()
+    if anchor:
+        center = next(
+            (s for s in suburbs if str(s.get("suburb", "")).lower() == anchor.lower()),
+            None,
+        )
+        if center:
+            return filter_suburbs_from_center(
+                suburbs,
+                float(center["lat"]),
+                float(center["lng"]),
+                r,
+            )
     return filter_suburbs_by_radius_km(suburbs, metro_label, r)
+
+
+def list_metro_suburb_names(metro_label: str) -> list[str]:
+    key = resolve_metro_key(metro_label)
+    return [str(s["suburb"]) for s in METRO_SUBURBS[key]]

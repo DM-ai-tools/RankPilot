@@ -4,6 +4,10 @@ export type IntegrationStatus = {
   connected: boolean;
   connected_at: string | null;
   extra: Record<string, string>;
+  /** GBP/GSC/GA4: a property/location was selected after OAuth */
+  location_selected?: boolean;
+  /** OAuth + required selection complete — safe to use in app features */
+  ready?: boolean;
 };
 
 export type IntegrationsStatusResponse = Record<string, IntegrationStatus>;
@@ -49,7 +53,9 @@ export type GbpProperty = {
 export const fetchIntegrationsStatus = (): Promise<IntegrationsStatusResponse> =>
   apiGet<IntegrationsStatusResponse>("/api/v1/integrations/status");
 
-export const fetchGoogleAuthUrl = (type: "gsc" | "gbp" | "ga4"): Promise<GoogleAuthUrlResponse> =>
+export const fetchGoogleAuthUrl = (
+  type: "gsc" | "gbp" | "ga4" | "google_ads",
+): Promise<GoogleAuthUrlResponse> =>
   apiGet<GoogleAuthUrlResponse>(`/api/v1/integrations/google/auth-url?type=${type}`);
 
 export const connectWordPress = (body: WordPressConnectRequest): Promise<WordPressConnectResponse> =>

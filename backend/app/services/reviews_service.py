@@ -16,6 +16,13 @@ from app.schemas.reviews import (
     ReviewItemRow,
     ReviewsSummaryResponse,
 )
+from app.lib.maps_pack_rank import maps_pack_rating_value, maps_pack_reviews_count
+from app.services.ahrefs_cache_service import (
+    AHREFS_CACHE_TTL_HOURS,
+    cache_timestamps_iso,
+    get_ahrefs_cache,
+    set_ahrefs_cache,
+)
 from app.services.dataforseo_service import DataForSEOClient, format_maps_location_name
 
 logger = logging.getLogger(__name__)
@@ -34,15 +41,13 @@ def _metro_to_location_name(metro_label: str) -> str:
 
 def _reviews_keyword(business_name: str, business_address: str, metro_label: str) -> str:
     name = (business_name or "").strip()
-    addr = (business_address or "").strip()
     metro = (metro_label or "").strip()
-    if addr:
-        q = f"{name} {addr}"
-    elif name and metro:
-        q = f"{name} {metro}"
-    else:
-        q = name or metro or "business"
-    return q[:700]
+    city = metro.split(",")[0].strip() if metro else ""
+    if name and city:
+        return f"{name} {city}"[:700]
+    if name:
+        return name[:700]
+    return (metro or "business")[:700]
 
 
 def _parse_review_ts(raw: object) -> datetime | None:
@@ -68,11 +73,41 @@ def _rating_value(r: object) -> float | None:
         return None
 
 
+def _reviews_summary_cache_key(client_id: UUID) -> str:
+    return f"reviews_summary:{client_id}"
+
+
 class ReviewsService:
     def __init__(self, session: AsyncSession):
         self._session = session
 
-    async def fetch_summary(self, client_id: UUID) -> ReviewsSummaryResponse:
+    async def fetch_summary(self, client_id: UUID, *, force_refresh: bool = False) -> ReviewsSummaryResponse:
+        cache_key = _reviews_summary_cache_key(client_id)
+        if not force_refresh:
+            cached, fetched_at, expires_at = await get_ahrefs_cache(self._session, cache_key)
+            if cached:
+                out = ReviewsSummaryResponse.model_validate(cached)
+                cached_at_s, expires_s = cache_timestamps_iso(fetched_at, expires_at)
+                out.from_cache = True
+                out.cached_at = cached_at_s
+                out.cache_expires_at = expires_s
+                return out
+
+        result = await self._fetch_summary_live(client_id)
+        if result.fetched_at:
+            payload = result.model_dump(mode="json")
+            for key in ("from_cache", "cached_at", "cache_expires_at"):
+                payload.pop(key, None)
+            await set_ahrefs_cache(
+                self._session,
+                cache_key,
+                payload,
+                client_id=client_id,
+                ttl_hours=AHREFS_CACHE_TTL_HOURS,
+            )
+        return result
+
+    async def _fetch_summary_live(self, client_id: UUID) -> ReviewsSummaryResponse:
         settings = get_settings()
         if not str(settings.dataforseo_login or "").strip() or not str(settings.dataforseo_password or "").strip():
             return ReviewsSummaryResponse(
@@ -131,7 +166,10 @@ class ReviewsService:
 
         if not isinstance(block, dict):
             return ReviewsSummaryResponse(
-                message="No review block returned — check business name/address or try connecting GBP for a place_id.",
+                message=(
+                    "Could not load reviews from DataForSEO (task timed out or no match). "
+                    "Try again in a minute, or connect GBP so we can use your Google place_id."
+                ),
             )
 
         items_raw = block.get("items")
@@ -261,16 +299,20 @@ class ReviewsService:
                 key = dom if dom else title.lower()
                 if not key:
                     continue
-                rc_raw = item.get("reviews_count")
-                try:
-                    rc = int(rc_raw) if rc_raw is not None else None
-                except (TypeError, ValueError):
-                    rc = None
-                rat_raw = item.get("rating")
-                try:
-                    rat = float(rat_raw) if rat_raw is not None else None
-                except (TypeError, ValueError):
-                    rat = None
+                rc = maps_pack_reviews_count(item)
+                if rc is None:
+                    rc_raw = item.get("reviews_count")
+                    try:
+                        rc = int(rc_raw) if rc_raw is not None else None
+                    except (TypeError, ValueError):
+                        rc = None
+                rat = maps_pack_rating_value(item)
+                if rat is None:
+                    rat_raw = item.get("rating")
+                    try:
+                        rat = float(rat_raw) if rat_raw is not None else None
+                    except (TypeError, ValueError):
+                        rat = None
                 rank = item.get("rank")
                 try:
                     rank_i = int(rank) if rank is not None else 999
@@ -322,5 +364,15 @@ class ReviewsService:
             client_title=str(client_row["business_name"] or ""),
             client_reviews_total=client_reviews_total,
             competitors=top_competitors,
-            note="Review counts from Google Maps pack data captured during your last scan. Monthly velocity = total ÷ 12 (1-year estimate)." if top_competitors else "No competitor data in scan snapshots — reviews_count will populate after next Maps scan.",
+            note=(
+                "Competitors found from your last scan, but review counts were not captured. "
+                "Run a new Maps scan from the Dashboard to populate review velocity."
+                if top_competitors and all(c.reviews_count is None for c in top_competitors)
+                else (
+                    "Review counts from Google Maps pack data captured during your last scan. "
+                    "Monthly velocity = total ÷ 12 (1-year estimate)."
+                    if top_competitors
+                    else "No competitor data in scan snapshots — reviews_count will populate after next Maps scan."
+                )
+            ),
         )

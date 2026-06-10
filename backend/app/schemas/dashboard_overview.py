@@ -10,12 +10,21 @@ class DashboardScoresPart(BaseModel):
     seo_visibility: ScoreBlock
 
 
+class KeywordVolumeRow(BaseModel):
+    keyword: str
+    monthly_searches: int
+
+
 class StatBlock(BaseModel):
     visibility_score: float
     visibility_delta: float | None = None
     suburbs_ranked: int
     suburbs_total: int
     monthly_searches: int
+    keyword_volumes: list[KeywordVolumeRow] = Field(
+        default_factory=list,
+        description="Ahrefs monthly search volume for each onboarding primary keyword",
+    )
     monthly_volume_note: str | None = Field(
         default=None,
         description="How monthly_searches was derived (one state vs estimate), for dashboard copy",

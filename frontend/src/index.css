@@ -1,12 +1,73 @@
 @import "leaflet/dist/leaflet.css";
 
+@font-face {
+  font-family: "Geist";
+  src: url("https://cdn.jsdelivr.net/npm/geist@1.3.1/dist/fonts/geist-sans/Geist-Variable.woff2")
+    format("woff2");
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Geist Mono";
+  src: url("https://cdn.jsdelivr.net/npm/geist@1.3.1/dist/fonts/geist-mono/GeistMono-Variable.woff2")
+    format("woff2");
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+}
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
 @layer base {
+  :root {
+    --brand-600: #4d8a20;
+    --brand-400: #7fbb43;
+    --brand-50: #f1f9e9;
+    --page: #f3f7ee;
+    --ink-900: #0f1b15;
+  }
+
   body {
-    @apply font-sans text-navy antialiased;
-    background-color: #EDF4DD;
+    background-color: var(--page);
+    @apply font-sans text-neutral-800 antialiased;
+    font-feature-settings: "kern" 1, "liga" 1;
+  }
+
+  h1,
+  h2,
+  h3 {
+    @apply tracking-tight text-neutral-900;
+  }
+}
+
+@layer components {
+  .page-scroll {
+    @apply flex min-w-0 flex-1 flex-col overflow-y-auto bg-white px-7 py-7;
+  }
+
+  .stat-tile {
+    @apply rounded-xl border border-neutral-200 bg-white p-5 shadow-sm;
+  }
+
+  .data-table-head {
+    @apply bg-neutral-50 text-[11px] font-semibold uppercase tracking-[0.06em] text-neutral-500;
+  }
+
+  .tab-bar {
+    @apply flex flex-wrap gap-1 rounded-lg bg-white p-1 shadow-sm ring-1 ring-neutral-200;
+  }
+
+  .tab-bar-active {
+    @apply bg-neutral-50 font-semibold text-neutral-900 shadow-sm;
+  }
+}
+
+@layer utilities {
+  .tabular-nums {
+    font-variant-numeric: tabular-nums;
   }
 }

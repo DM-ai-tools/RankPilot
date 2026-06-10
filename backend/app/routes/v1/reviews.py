@@ -16,9 +16,10 @@ def get_reviews_service(session: DbSession) -> ReviewsService:
 @router.get("/summary", response_model=ReviewsSummaryResponse)
 async def get_reviews_summary(
     client_id: CurrentClientId,
+    refresh: bool = False,
     svc: ReviewsService = Depends(get_reviews_service),
 ) -> ReviewsSummaryResponse:
-    return await svc.fetch_summary(client_id)
+    return await svc.fetch_summary(client_id, force_refresh=refresh)
 
 
 @router.get("/competitors", response_model=CompetitorVelocityResponse)

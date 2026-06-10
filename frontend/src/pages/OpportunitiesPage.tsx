@@ -33,7 +33,7 @@ export function OpportunitiesPage() {
           </>
         }
       />
-      <div className="flex-1 overflow-y-auto bg-rp-light px-7 py-6">
+      <div className="page-scroll">
         {!token ? (
           <p className="text-sm text-rp-tmid">
             <Link to="/login" className="font-semibold text-[#72C219] hover:underline">

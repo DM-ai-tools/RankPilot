@@ -1,4 +1,4 @@
-﻿import { apiGet, apiPatchJson, apiPostJson } from "./client";
+import { apiGet, apiGetBlob, apiPatchJson, apiPostJson } from "./client";
 
 export type ContentItem = {
   id: string;
@@ -34,3 +34,18 @@ export const generateContent = (): Promise<{
   error?: string;
   warnings?: string[];
 }> => apiPostJson("/api/v1/content-queue/generate", {});
+
+export const generateMonthlyTimeline = (): Promise<{
+  generated: number;
+  weeks: number;
+  items: { week: number; type: string; keyword: string; scheduled_for: string }[];
+  error?: string;
+  warnings?: string[];
+  source?: string;
+}> => apiPostJson("/api/v1/content-queue/generate-timeline", {});
+
+export const downloadContentPlanExcel = (): Promise<{ blob: Blob; filename: string }> =>
+  apiGetBlob("/api/v1/content-queue/export");
+
+export const publishContentItem = (id: string): Promise<{ ok: boolean; type?: string; error?: string }> =>
+  apiPostJson(`/api/v1/content-queue/${id}/publish`, {});

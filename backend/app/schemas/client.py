@@ -14,6 +14,8 @@ class ClientMeResponse(BaseModel):
     plan: str | None
     primary_keyword: str
     metro_label: str
+    location_scope: str = "suburb"
+    primary_suburb: str = ""
     search_radius_km: int = 25
     # Map anchor (Nominatim / Google Places / metro CBD fallback).
     business_lat: float | None = None

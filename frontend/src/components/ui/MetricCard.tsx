@@ -1,4 +1,4 @@
-﻿import type { ReactNode } from "react";
+import type { ReactNode } from "react";
 
 interface MetricCardProps {
   label: string;
@@ -8,40 +8,43 @@ interface MetricCardProps {
   deltaUp?: boolean;
   deltaDown?: boolean;
   children?: ReactNode;
+  className?: string;
 }
 
-/**
- * Matches the `.metric-card` from the RankPilot mockup:
- * white card, 10px radius, 14px padding, 1px border.
- * Label: 10px/semibold/uppercase/letter-spaced.
- * Value: 24px/extrabold/navy.
- * Change: green (up) or red (down).
- */
-export function MetricCard({ label, value, sub, delta, deltaUp, deltaDown, children }: MetricCardProps) {
+export function MetricCard({
+  label,
+  value,
+  sub,
+  delta,
+  deltaUp,
+  deltaDown,
+  children,
+  className = "",
+}: MetricCardProps) {
   const deltaColor = deltaUp
-    ? "text-emerald-600"
+    ? "text-success"
     : deltaDown
-      ? "text-red-500"
-      : "text-rp-tlight";
+      ? "text-danger"
+      : "text-neutral-500";
 
   return (
-    <div className="rounded-[10px] border border-rp-border bg-white p-[14px]">
-      <div className="mb-1.5 text-[10px] font-semibold uppercase tracking-[0.8px] text-rp-tlight">
+    <div className={`flex min-h-[148px] min-w-0 flex-col rounded-xl border border-neutral-200 bg-white p-5 shadow-sm ${className}`}>
+      <div className="mb-2 text-[11px] font-semibold uppercase tracking-[0.06em] text-neutral-500">
         {label}
       </div>
-      {children ?? (
-        <>
-          <div className="text-[24px] font-extrabold leading-none text-navy">
-            {value}
-          </div>
-          {delta ? (
-            <div className={`mt-1 text-[10px] font-semibold ${deltaColor}`}>{delta}</div>
-          ) : null}
-          {sub ? (
-            <div className="mt-1 text-[10px] text-rp-tlight">{sub}</div>
-          ) : null}
-        </>
-      )}
+      <div className="flex flex-1 flex-col justify-center">
+        {children ?? (
+          <>
+            <div className="text-[28px] font-extrabold tabular-nums leading-none text-neutral-900">
+              {value}
+            </div>
+            {delta ? (
+              <div className={`mt-1.5 text-[11px] font-semibold ${deltaColor}`}>{delta}</div>
+            ) : null}
+            {sub ? <div className="mt-1 text-[11px] text-neutral-500">{sub}</div> : null}
+          </>
+        )}
+      </div>
     </div>
   );
 }

@@ -18,6 +18,7 @@ export type DashboardOverview = {
     suburbs_ranked: number;
     suburbs_total: number;
     monthly_searches: number;
+    keyword_volumes?: { keyword: string; monthly_searches: number }[];
     monthly_volume_note?: string | null;
     missed_suburbs: number;
     missed_note: string | null;
@@ -55,6 +56,9 @@ export type MapPackPlace = {
   lat: number;
   lng: number;
   rank: number | null;
+  pack_rank_best?: number | null;
+  pack_rank_worst?: number | null;
+  suburb_scan_count?: number;
   domain: string | null;
   url: string | null;
   address: string | null;
@@ -71,6 +75,7 @@ export type SuburbRanksResponse = {
   pack_11_20_count: number;
   not_ranking_count: number;
   map_competitors: MapPackPlace[];
+  volume_source?: string;
 };
 
 export type ContentQueueItem = {
@@ -137,6 +142,7 @@ export type MonthlyReport = {
   pages_published: number | null;
   citations_fixed: number | null;
   reviews_new: number | null;
+  gbp_posts?: number | null;
   narrative_text: string | null;
   pdf_url: string | null;
 };
@@ -162,6 +168,9 @@ export type ReviewsSummaryResponse = {
   reviews: ReviewItemRow[];
   fetched_at: string | null;
   message: string | null;
+  from_cache?: boolean;
+  cached_at?: string | null;
+  cache_expires_at?: string | null;
 };
 
 export type CompetitorVelocityItem = {

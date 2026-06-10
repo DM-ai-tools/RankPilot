@@ -57,13 +57,22 @@ def _claude_model() -> str:
     return (get_settings().anthropic_content_model or "claude-sonnet-4-6").strip()
 
 
-def _call_claude(prompt: str, api_key: str) -> str:
+def _call_claude(
+    prompt: str,
+    api_key: str,
+    *,
+    max_tokens: int = 2048,
+    temperature: float | None = None,
+) -> str:
     client = anthropic.Anthropic(api_key=api_key)
-    msg = client.messages.create(
-        model=_claude_model(),
-        max_tokens=2048,
-        messages=[{"role": "user", "content": prompt}],
-    )
+    kwargs: dict = {
+        "model": _claude_model(),
+        "max_tokens": max_tokens,
+        "messages": [{"role": "user", "content": prompt}],
+    }
+    if temperature is not None:
+        kwargs["temperature"] = temperature
+    msg = client.messages.create(**kwargs)
     return msg.content[0].text.strip()
 
 

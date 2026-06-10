@@ -182,6 +182,10 @@ Make sure to update:
 | `ANTHROPIC_API_KEY` | Backend | For AI features | Anthropic console |
 | `FIRECRAWL_API_KEY` | Backend | For citations | Firecrawl dashboard |
 | `GOOGLE_REDIRECT_BASE_URL` | Backend | For GBP OAuth | Backend public URL |
+| `GOOGLE_CLIENT_ID` | Backend | For GSC/GBP/GA4 OAuth | OAuth Web client |
+| `GOOGLE_CLIENT_SECRET` | Backend | For GSC/GBP/GA4 OAuth | OAuth Web client |
+
+**Google Business Profile (GBP)** is not only OAuth + env vars. Google must **approve API access** for your Cloud project (verified GBP 60+ days, website on profile, contact form). Until approved, quota is **0 QPM** and location listing fails. Full checklist: **[docs/GBP_API_SETUP.md](docs/GBP_API_SETUP.md)** and [Google prerequisites](https://developers.google.com/my-business/content/prereqs#request-access).
 
 ---
 
@@ -213,6 +217,9 @@ Make sure to update:
 
 **Maps scan jobs stuck**
 → The app auto-resets `running` jobs to `queued` on startup. Restart the backend service if jobs appear stuck.
+
+**GBP connect works but “No properties” / invalid argument / API errors**
+→ See **[docs/GBP_API_SETUP.md](docs/GBP_API_SETUP.md)**. Enable both My Business APIs, request **Basic API Access** from Google, add Test users while OAuth is in Testing mode, and use the Google account that owns the Business Profile.
 
 **Deploy logs: `ConnectionRefusedError` / `[Errno 111] Connection refused` when connecting to Postgres**
 

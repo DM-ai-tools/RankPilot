@@ -23,9 +23,11 @@ dependencies = [
     "redis>=5.2.0",
     "apscheduler>=3.10.4",
     "uuid6>=2024.7.10",
+    "pillow>=11.0.0",
+    "reportlab>=4.2.0",
+    "openpyxl>=3.1.5",
+    "google-ads>=25.0.0",
 ]
-
-[project.optional-dependencies]
 dev = [
     "ruff>=0.8.0",
     "mypy>=1.13.0",

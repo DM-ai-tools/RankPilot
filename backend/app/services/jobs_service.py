@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.schemas.common import JobAcceptedResponse
 from app.schemas.jobs import JobStatusResponse, ScanCreateRequest
+from app.lib.primary_keywords import scan_keyword_from_primary
 
 
 class JobsService:
@@ -52,23 +53,12 @@ class JobsService:
                 )
             ).mappings().first()
             kw = str(row["primary_keyword"] if row else "").strip()
-        if not kw:
+
+        scan_kw = scan_keyword_from_primary(kw)
+        if not scan_kw:
             raise ValueError(
                 "Set a primary service keyword (onboarding or dashboard) before running a Maps scan."
             )
-
-        # Dashboard / Keywords / overview all join rp_rank_history on rp_clients.primary_keyword.
-        # Keep them aligned whenever a scan is queued (explicit keyword or resolved from profile).
-        await self._session.execute(
-            text(
-                """
-                UPDATE rp_clients
-                SET primary_keyword = :kw, updated_at = now()
-                WHERE client_id = :cid
-                """
-            ),
-            {"kw": kw, "cid": str(client_id)},
-        )
 
         jid = uuid7()
         if body.radius_km is not None:
@@ -83,7 +73,7 @@ class JobsService:
                 )
             ).mappings().first()
             radius = int(crow["r"]) if crow else 25
-        payload = {"keyword": kw, "radius_km": radius}
+        payload = {"keyword": scan_kw, "radius_km": radius}
         # One idempotency key per job so every "Save & scan" / "Re-run" queues a new worker run
         # (old ON CONFLICT same keyword+radius silently skipped re-scans).
         idem = str(jid)

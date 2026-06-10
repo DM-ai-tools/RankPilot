@@ -1,18 +1,23 @@
 import { useQuery } from "@tanstack/react-query";
 import { TrendingUp, TrendingDown, Minus, KeyRound } from "lucide-react";
 
+import { formatApiError } from "../api/client";
+import { fetchSuburbKeywordResearch } from "../api/keywords";
+import { AhrefsKeywordOverview } from "../components/keywords/AhrefsKeywordOverview";
+import { KeywordDataSourceBadge } from "../components/keywords/KeywordDataSourceBadge";
 import { fetchMe } from "../api/onboarding";
 import { fetchSuburbRanks } from "../api/ranks";
 import { TopBar } from "../components/layout/TopBar";
 import { Card, CardHeader } from "../components/ui/Card";
 import { useAuthStore } from "../stores/authStore";
+import { formatPrimaryKeywordsLabel, scanKeywordFromPrimary } from "../lib/primaryKeywords";
 import type { SuburbRank } from "../api/types";
 
 /* ── rank badge colour ──────────────────────────────────────────── */
 function rankColor(r: number | null): string {
   if (r == null)  return "text-rp-tlight";
   if (r <= 3)     return "text-emerald-600";
-  if (r <= 10)    return "text-[#72C219]";
+  if (r <= 10)    return "text-brand-600";
   if (r <= 20)    return "text-amber-500";
   return "text-red-500";
 }
@@ -20,7 +25,7 @@ function rankColor(r: number | null): string {
 function rankBg(r: number | null): string {
   if (r == null)  return "bg-rp-light";
   if (r <= 3)     return "bg-emerald-50";
-  if (r <= 10)    return "bg-[#72C219]/10";
+  if (r <= 10)    return "bg-brand-50";
   if (r <= 20)    return "bg-amber-50";
   return "bg-red-50";
 }
@@ -42,12 +47,23 @@ export function RanksPage() {
   const token = useAuthStore((s) => s.accessToken);
   const me = useQuery({ queryKey: ["me", token], queryFn: fetchMe, enabled: Boolean(token) });
   const ranks = useQuery({
-    queryKey: ["ranks", "suburbs", token],
+    queryKey: ["ranks", "suburbs", "ahrefs-vol", token],
     queryFn: fetchSuburbRanks,
     enabled: Boolean(token),
+    staleTime: 60_000,
+    refetchOnMount: "always",
+  });
+  const keywordResearch = useQuery({
+    queryKey: ["keywords", "suburb-research", "ahrefs-v3", token],
+    queryFn: () => fetchSuburbKeywordResearch(),
+    enabled: Boolean(token),
+    staleTime: 60_000,
+    refetchOnMount: "always",
+    retry: 1,
   });
 
-  const kw      = ranks.data?.keyword || me.data?.primary_keyword || "";
+  const kw      = ranks.data?.keyword || scanKeywordFromPrimary(me.data?.primary_keyword || "") || "";
+  const kwLabel = formatPrimaryKeywordsLabel(keywordResearch.data?.primary_keyword || me.data?.primary_keyword || kw);
   const metro   = ranks.data?.metro_label || me.data?.metro_label || "";
   const radius  = me.data?.search_radius_km ?? 25;
   const suburbs = ranks.data?.suburbs ?? [];
@@ -77,7 +93,7 @@ export function RanksPage() {
             : "Run a scan to populate keyword rankings"
         }
       />
-      <div className="flex-1 overflow-y-auto bg-rp-light px-7 py-6">
+      <div className="page-scroll">
 
         {/* ── KPI cards ─────────────────────────────────────────── */}
         <div className="mb-6 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
@@ -87,10 +103,10 @@ export function RanksPage() {
             { label: "Pack 4–10",       value: total ? String(pack4to10) : "—", desc: "On first page" },
             { label: "Not Ranking",     value: total ? String(notRanking) : "—", desc: "Outside top 20" },
           ].map((s) => (
-            <div key={s.label} className="rounded-xl border border-rp-border bg-white px-5 py-4 shadow-card">
-              <div className="text-[11px] font-semibold uppercase tracking-wide text-rp-tlight">{s.label}</div>
-              <div className="mt-1 truncate text-[24px] font-extrabold leading-none text-navy">{s.value}</div>
-              <div className="mt-0.5 text-[10px] text-rp-tlight">{s.desc}</div>
+            <div key={s.label} className="stat-tile">
+              <div className="text-[11px] font-semibold uppercase tracking-[0.06em] text-neutral-500">{s.label}</div>
+              <div className="mt-1 truncate text-[28px] font-extrabold tabular-nums leading-none text-neutral-900">{s.value}</div>
+              <div className="mt-0.5 text-[11px] text-neutral-500">{s.desc}</div>
             </div>
           ))}
         </div>
@@ -101,8 +117,15 @@ export function RanksPage() {
             title={`Suburb Rankings — "${kw || "keyword not set"}"`}
             subtitle={
               total
-                ? `${ranked} of ${total} suburbs ranked · search radius ${radius} km`
+                ? `${ranked} of ${total} suburbs ranked · search radius ${radius} km · volumes from Ahrefs`
                 : "No scan data yet"
+            }
+            right={
+              ranks.data?.volume_source ? (
+                <KeywordDataSourceBadge
+                  source={ranks.data.volume_source === "ahrefs" ? "ahrefs" : "none"}
+                />
+              ) : undefined
             }
           />
 
@@ -129,15 +152,15 @@ export function RanksPage() {
           )}
 
           {sorted.length > 0 && (
-            <div className="overflow-x-auto">
+            <div className="max-h-[min(520px,58vh)] overflow-auto">
               <table className="w-full border-collapse text-left">
                 <thead>
-                  <tr className="border-b border-rp-border bg-rp-light text-[11px] font-bold uppercase tracking-wide text-rp-tlight">
+                  <tr className="sticky top-0 z-10 border-b border-rp-border bg-rp-light text-[11px] font-bold uppercase tracking-wide text-rp-tlight shadow-[0_1px_0_0_#E2E8F0]">
                     <th className="px-4 py-3 w-10">#</th>
                     <th className="px-4 py-3">Suburb</th>
                     <th className="px-4 py-3">State</th>
                     <th className="px-4 py-3 text-center">Maps Rank</th>
-                    <th className="px-4 py-3 text-right">Monthly Searches</th>
+                    <th className="px-4 py-3 text-right">Ahrefs volume</th>
                     <th className="px-4 py-3">Status</th>
                   </tr>
                 </thead>
@@ -159,9 +182,13 @@ export function RanksPage() {
                         </span>
                       </td>
                       <td className="px-4 py-2.5 text-right text-[12px] font-semibold text-navy">
-                        {s.monthly_volume_proxy > 0
-                          ? s.monthly_volume_proxy.toLocaleString()
-                          : <span className="text-rp-tlight">—</span>}
+                        {ranks.data?.volume_source === "ahrefs"
+                          ? s.monthly_volume_proxy > 0
+                            ? s.monthly_volume_proxy.toLocaleString()
+                            : <span className="text-rp-tlight">0–10</span>
+                          : s.monthly_volume_proxy > 0
+                            ? s.monthly_volume_proxy.toLocaleString()
+                            : <span className="text-rp-tlight">—</span>}
                       </td>
                       <td className="px-4 py-2.5 text-[11px]">
                         {s.rank_position == null ? (
@@ -181,6 +208,89 @@ export function RanksPage() {
             </div>
           )}
         </Card>
+
+        <div className="mt-6 space-y-6">
+          <AhrefsKeywordOverview defaultKeyword={kw} />
+
+        <Card>
+          <CardHeader
+            title={
+              keywordResearch.data?.location_scope === "city"
+                ? "City keyword suggestions (Ahrefs)"
+                : "Suburb keyword suggestions (Ahrefs)"
+            }
+            subtitle={
+              keywordResearch.data?.primary_keyword
+                ? keywordResearch.data.location_scope === "city"
+                  ? `Live volume & KD for ${kwLabel} in ${keywordResearch.data.suburbs[0] ?? "your city"}`
+                  : `Live volume & KD for ${kwLabel} across your top suburbs`
+                : "Primary keywords + local phrases with Ahrefs volume and difficulty"
+            }
+            right={
+              keywordResearch.data?.source ? (
+                <KeywordDataSourceBadge source={keywordResearch.data.source} />
+              ) : undefined
+            }
+          />
+          <div className="p-4">
+            {keywordResearch.isLoading && (
+              <p className="text-sm text-rp-tlight">
+                Loading keywords from Ahrefs…
+              </p>
+            )}
+            {keywordResearch.data?.source && keywordResearch.data.source !== "ahrefs" ? (
+              <div className="mb-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[12px] text-amber-900">
+                Data source is <strong>{keywordResearch.data.source}</strong>, not Ahrefs. Add{" "}
+                <strong>AHREFS_API_KEY</strong> to backend/.env and hard-refresh (Ctrl+Shift+R).
+              </div>
+            ) : null}
+            {keywordResearch.data?.message && (
+              <div className="mb-3 rounded-lg border border-[#FDE68A] bg-[#FFFBEB] px-3 py-2 text-[12px] text-[#92400E]">
+                {keywordResearch.data.message}
+              </div>
+            )}
+            {keywordResearch.isError && (
+              <p className="text-sm text-red-600">{formatApiError(keywordResearch.error)}</p>
+            )}
+            {(keywordResearch.data?.suburb_phrases.length ?? 0) > 0 && (
+              <div className="overflow-x-auto">
+                <table className="w-full border-collapse text-left text-[11px]">
+                  <thead>
+                    <tr className="border-b border-rp-border bg-rp-light text-[10px] font-bold uppercase text-rp-tlight">
+                      <th className="px-3 py-2">
+                        {keywordResearch.data?.location_scope === "city" ? "City" : "Suburb"}
+                      </th>
+                      <th className="px-3 py-2">Keyword phrase</th>
+                      <th className="px-3 py-2 text-right">Volume</th>
+                      <th className="px-3 py-2 text-center">KD</th>
+                      <th className="px-3 py-2 text-right">Opportunity</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {keywordResearch.data!.suburb_phrases.map((row) => (
+                      <tr key={`${row.suburb}-${row.keyword}`} className="border-b border-[#F0F4F9] hover:bg-[#FAFBFD]">
+                        <td className="px-3 py-2 font-semibold text-navy">{row.suburb}</td>
+                        <td className="px-3 py-2 text-rp-tmid">{row.keyword}</td>
+                        <td className="px-3 py-2 text-right font-semibold text-navy">
+                          {row.avg_monthly_searches > 0 ? row.avg_monthly_searches.toLocaleString() : "—"}
+                        </td>
+                        <td className="px-3 py-2 text-center font-semibold text-navy">
+                          {row.difficulty != null ? row.difficulty : "—"}
+                        </td>
+                        <td className="px-3 py-2 text-right font-semibold text-[#4a8a0f]">
+                          {(row.opportunity_score ?? 0) > 0
+                            ? (row.opportunity_score ?? 0).toLocaleString()
+                            : "—"}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        </Card>
+        </div>
 
       </div>
     </>

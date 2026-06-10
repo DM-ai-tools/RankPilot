@@ -7,14 +7,21 @@ import { fetchDashboardOverview } from "../api/overview";
 import { fetchMe, patchMe } from "../api/onboarding";
 import { fetchOpportunities } from "../api/opportunities";
 import { fetchSuburbRanks } from "../api/ranks";
+import { formatKeywordVolume } from "../api/keywords";
 import { enqueueMapsScan } from "../api/scans";
 import { LeafletVisibilityMap } from "../components/map/LeafletVisibilityMap";
 import { TopBar } from "../components/layout/TopBar";
+import {
+  getStoredScanJobId,
+  storeScanJobId,
+  useActiveScanPolling,
+} from "../hooks/useScanPolling";
 import { MetricCard } from "../components/ui/MetricCard";
 import { Badge } from "../components/ui/Badge";
 import { Button } from "../components/ui/Button";
 import { Card, CardHeader } from "../components/ui/Card";
 import { useAuthStore } from "../stores/authStore";
+import { normalizePrimaryKeywords, parsePrimaryKeywords, scanKeywordFromPrimary } from "../lib/primaryKeywords";
 import { visibilityScoreFromSuburbs } from "../lib/scoring";
 
 /* ── helpers ─────────────────────────────────────────────────── */
@@ -42,18 +49,18 @@ function VisibilityGauge({ score }: { score: number }) {
     <div className="flex flex-col items-center">
       <div className="relative flex items-center justify-center" style={{ width: 70, height: 70 }}>
         <svg width="70" height="70" viewBox="0 0 70 70">
-          <circle cx="35" cy="35" r={r} fill="none" stroke="#DDE6D1" strokeWidth="6" />
+          <circle cx="35" cy="35" r={r} fill="none" stroke="#e2e7df" strokeWidth="6" />
           <circle
             cx="35" cy="35" r={r}
             fill="none"
-            stroke="#2E8B7F"
+            stroke="#4d8a20"
             strokeWidth="6"
             strokeDasharray={`${(pct / 100) * circ} ${circ}`}
             strokeLinecap="round"
             transform="rotate(-90 35 35)"
           />
         </svg>
-        <div className="absolute text-[16px] font-black text-navy">{Math.round(pct)}</div>
+        <div className="absolute text-[16px] font-black tabular-nums text-neutral-900">{Math.round(pct)}</div>
       </div>
     </div>
   );
@@ -111,6 +118,8 @@ export function DashboardPage() {
   const qc    = useQueryClient();
   const [urlInput, setUrlInput] = useState("");
   const [kwInput,  setKwInput]  = useState("");
+  const [activeJobId, setActiveJobId] = useState<string | null>(() => getStoredScanJobId());
+  const { isScanning, progress: scanProgress } = useActiveScanPolling(activeJobId);
 
   const me = useQuery({
     queryKey: ["me", token],
@@ -137,6 +146,7 @@ export function DashboardPage() {
     queryFn:  fetchSuburbRanks,
     enabled:  Boolean(token),
     staleTime: 45_000,
+    refetchInterval: isScanning ? 5_000 : false,
   });
 
   const opportunities = useQuery({
@@ -151,10 +161,10 @@ export function DashboardPage() {
     mutationFn: async () => {
       const profile = await patchMe({
         business_url:     urlInput.trim(),
-        primary_keyword:  kwInput.trim() || undefined,
+        primary_keyword:  normalizePrimaryKeywords(kwInput) || undefined,
       });
       const job = await enqueueMapsScan({
-        keyword: profile.primary_keyword || null,
+        keyword: scanKeywordFromPrimary(profile.primary_keyword || "") || null,
         radius_km: profile.search_radius_km ?? null,
       });
       return { profile, job };
@@ -162,6 +172,8 @@ export function DashboardPage() {
     onSuccess: (data) => {
       setUrlInput(data.profile.business_url || "");
       setKwInput(data.profile.primary_keyword || "");
+      storeScanJobId(data.job.job_id);
+      setActiveJobId(data.job.job_id);
       void qc.invalidateQueries({ queryKey: ["me"] });
       void qc.invalidateQueries({ queryKey: ["dashboard"] });
       void qc.invalidateQueries({ queryKey: ["ranks"] });
@@ -171,10 +183,12 @@ export function DashboardPage() {
   const scan = useMutation({
     mutationFn: () =>
       enqueueMapsScan({
-        keyword: kwInput.trim() || null,
+        keyword: scanKeywordFromPrimary(kwInput) || null,
         radius_km: me.data?.search_radius_km ?? null,
       }),
-    onSuccess: () => {
+    onSuccess: (data) => {
+      storeScanJobId(data.job_id);
+      setActiveJobId(data.job_id);
       void qc.invalidateQueries({ queryKey: ["dashboard"] });
       void qc.invalidateQueries({ queryKey: ["ranks"] });
       void qc.invalidateQueries({ queryKey: ["me"] });
@@ -215,7 +229,6 @@ export function DashboardPage() {
     : `26–30 km (regional)`
     : null;
 
-  const heatMapSubtitle = o ? `${o.metro_label} · "${o.keyword}"` : "";
 
   const nearMiss = (opportunities.data?.items ?? [])
     .filter((op) => op.rank_position != null && op.rank_position >= 11 && op.rank_position <= 20)
@@ -228,7 +241,7 @@ export function DashboardPage() {
 
   /* ── top-bar subtitle ──────────────────────────────────────── */
   const topBarSub = o
-    ? `${o.metro_label} · "${o.keyword}" · ${st?.suburbs_total ?? 0} suburbs tracked`
+    ? `${o.metro_label} · ${parsePrimaryKeywords(o.keyword).slice(0, 3).join(" · ") || o.keyword} · ${st?.suburbs_total ?? 0} suburbs`
     : overview.isLoading ? "Loading…" : "";
 
   return (
@@ -246,17 +259,24 @@ export function DashboardPage() {
             <Button
               size="sm"
               type="button"
-              title="Queues a Google Maps local-pack check for each suburb via DataForSEO (minutes, not seconds). Updates ranks and per-state Google Ads search volumes stored on your grid."
-              disabled={!token || scan.isPending || saveAndScan.isPending}
+              className="min-w-[7.5rem]"
+              title="Checks your Google Maps pack position in each suburb via DataForSEO (Ahrefs has no Maps rank API). Keyword volumes use Ahrefs when you view Keywords / the map."
+              disabled={!token || scan.isPending || saveAndScan.isPending || isScanning}
               onClick={() => void scan.mutate()}
             >
-              {scan.isPending ? "Scanning…" : "Run Scan Now"}
+              {isScanning
+                ? scanProgress && scanProgress.suburbs_total > 0
+                  ? `Scanning ${scanProgress.suburbs_checked}/${scanProgress.suburbs_total}…`
+                  : "Scanning…"
+                : scan.isPending
+                  ? "Queuing…"
+                  : "Scan Now"}
             </Button>
           </>
         }
       />
 
-      <div className="flex-1 overflow-y-auto bg-rp-light px-5 py-[18px]">
+      <div className="page-scroll">
 
         {/* ── Status banners ───────────────────────────────────── */}
         {saveAndScan.isSuccess ? (
@@ -303,11 +323,11 @@ export function DashboardPage() {
               </div>
               <div>
                 <label className="mb-1 block text-[10px] font-semibold uppercase tracking-wide text-rp-tlight">
-                  Keyword
+                  Primary services
                 </label>
                 <input
                   type="text"
-                  placeholder="e.g. plumber melbourne"
+                  placeholder="e.g. plumber, electrician (comma-separated)"
                   value={kwInput}
                   onChange={(e) => setKwInput(e.target.value)}
                   className="w-full rounded-lg border border-rp-border px-3 py-1.5 text-[13px] text-navy outline-none focus:border-[#72C219]"
@@ -324,7 +344,7 @@ export function DashboardPage() {
             </div>
             <p className="mt-1.5 text-[10px] text-rp-tlight">
               Metro / suburb grid comes from{" "}
-              <Link to="/onboarding" className="font-semibold text-[#72C219] hover:underline">
+              <Link to="/onboarding" className="font-semibold text-brand-600 hover:underline">
                 onboarding
               </Link>.
             </p>
@@ -334,7 +354,7 @@ export function DashboardPage() {
         {o ? (
           <>
             {/* ── 4 metric cards ─────────────────────────────────── */}
-            <div className="mb-[14px] grid grid-cols-2 gap-3 xl:grid-cols-4">
+            <div className="mb-5 grid min-w-0 grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
               {/* 1. Visibility Score — with SVG gauge */}
               <MetricCard label="Visibility Score">
                 <div className="flex flex-col items-center pt-1">
@@ -361,59 +381,91 @@ export function DashboardPage() {
                 delta={g ? `${g.page1_pct.toFixed(0)}% of grid` : undefined}
               />
 
-              {/* 4. Monthly Searches */}
-              <MetricCard
-                label="Monthly Searches"
-                value={fmtK(st?.monthly_searches ?? 0)}
-                delta={st?.monthly_volume_note ?? "Run a Maps scan to load DataForSEO keyword volumes"}
-              />
+              {/* 4. Monthly Searches — per primary keyword */}
+              <MetricCard label="Monthly Searches" className="xl:col-span-1">
+                {(() => {
+                  const rows =
+                    st?.keyword_volumes?.length
+                      ? st.keyword_volumes
+                      : parsePrimaryKeywords(o?.keyword ?? me.data?.primary_keyword ?? "").map((kw) => ({
+                          keyword: kw,
+                          monthly_searches: 0,
+                        }));
+                  const total = rows.reduce((sum, row) => sum + (row.monthly_searches ?? 0), 0);
+                  return (
+                    <>
+                      <div className="text-[28px] font-extrabold tabular-nums leading-none text-neutral-900">
+                        {total > 0 ? fmtK(total) : rows.length ? "—" : fmtK(0)}
+                      </div>
+                      {rows.length > 0 ? (
+                        <div className="mt-3 flex flex-col gap-1.5">
+                          {rows.map((row) => (
+                            <div
+                              key={row.keyword}
+                              className="flex items-center justify-between gap-2 rounded-md bg-brand-50 px-2 py-1"
+                            >
+                              <span className="min-w-0 truncate text-[11px] font-medium text-neutral-800" title={row.keyword}>
+                                {row.keyword}
+                              </span>
+                              <span className="shrink-0 text-[11px] font-bold tabular-nums text-brand-700">
+                                {formatKeywordVolume(row.monthly_searches)}
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+                      ) : null}
+                      <div className="mt-auto pt-2 text-[10px] text-neutral-500">
+                        {st?.monthly_volume_note ?? "Ahrefs · per keyword"}
+                      </div>
+                    </>
+                  );
+                })()}
+              </MetricCard>
             </div>
 
-            <div className="mb-[14px] rounded-[10px] border border-rp-border bg-white p-4">
-              <div className="mb-2">
-                <h3 className="text-[13px] font-bold text-navy">Business Details (Google)</h3>
-              </div>
-              <div className="grid gap-3 md:grid-cols-3">
+            <Card className="mb-5">
+              <CardHeader
+                title="Business Details (Google)"
+                subtitle="Live listing data from Google Places"
+              />
+              <div className="grid gap-4 p-6 md:grid-cols-3">
                 <div>
-                  <div className="text-[10px] font-semibold uppercase tracking-wide text-rp-tlight">Company</div>
-                  <div className="mt-1 text-[12px] font-semibold text-navy">
+                  <div className="text-[11px] font-semibold uppercase tracking-[0.06em] text-neutral-500">Company</div>
+                  <div className="mt-1 text-sm font-semibold text-neutral-900">
                     {o.business_profile?.name || me.data?.business_name || "Not found"}
                   </div>
                 </div>
                 <div>
-                  <div className="text-[10px] font-semibold uppercase tracking-wide text-rp-tlight">Address</div>
-                  <div className="mt-1 text-[12px] font-semibold text-navy">
+                  <div className="text-[11px] font-semibold uppercase tracking-[0.06em] text-neutral-500">Address</div>
+                  <div className="mt-1 text-sm font-semibold text-neutral-900">
                     {o.business_profile?.address || me.data?.business_address || "Not found"}
                   </div>
                 </div>
                 <div>
-                  <div className="text-[10px] font-semibold uppercase tracking-wide text-rp-tlight">Phone</div>
-                  <div className="mt-1 text-[12px] font-semibold text-navy">
+                  <div className="text-[11px] font-semibold uppercase tracking-[0.06em] text-neutral-500">Phone</div>
+                  <div className="mt-1 text-sm font-semibold tabular-nums text-neutral-900">
                     {o.business_profile?.phone || me.data?.business_phone || "Not found"}
                   </div>
                 </div>
               </div>
               {o.business_profile?.maps_url ? (
-                <div className="mt-3 text-[12px]">
+                <div className="border-t border-neutral-200 px-6 py-3">
                   <a
                     href={o.business_profile.maps_url}
                     target="_blank"
                     rel="noreferrer"
-                    className="font-semibold text-[#72C219] hover:underline"
+                    className="text-sm font-semibold text-brand-600 hover:underline"
                   >
                     Open Google Maps Location ↗
                   </a>
                 </div>
               ) : null}
-            </div>
+            </Card>
 
             {/* ── 2-col: Actions Taken + Upcoming Actions ─────────── */}
-            <div className="mb-[14px] grid gap-[14px] lg:grid-cols-2">
-              {/* Actions Taken This Week */}
-              <div className="overflow-hidden rounded-[10px] border border-rp-border bg-white">
-                <div className="flex items-center gap-2 border-b border-rp-border px-4 py-3">
-                  <h3 className="text-[13px] font-bold text-navy">Actions Taken This Week</h3>
-                </div>
+            <div className="mb-5 grid gap-4 lg:grid-cols-2">
+              <Card>
+                <CardHeader title="Actions Taken This Week" subtitle="Recent GBP and content activity" />
                 {o.activity.length === 0 ? (
                   <div className="px-4 py-6 text-center text-[12px] text-rp-tlight">
                     No activity logged yet — run your first scan.
@@ -428,13 +480,10 @@ export function DashboardPage() {
                     />
                   ))
                 )}
-              </div>
+              </Card>
 
-              {/* Upcoming Actions (recommendations) */}
-              <div className="overflow-hidden rounded-[10px] border border-rp-border bg-white">
-                <div className="flex items-center gap-2 border-b border-rp-border px-4 py-3">
-                  <h3 className="text-[13px] font-bold text-navy">⏰ Recommended Actions</h3>
-                </div>
+              <Card>
+                <CardHeader title="Recommended Actions" subtitle="Prioritized next steps for your SEO" />
                 {o.recommendations.length === 0 ? (
                   <div className="px-4 py-6 text-center text-[12px] text-rp-tlight">
                     No recommendations yet.
@@ -449,7 +498,7 @@ export function DashboardPage() {
                     />
                   ))
                 )}
-              </div>
+              </Card>
             </div>
 
             {/* ── Near-miss alert ──────────────────────────────────── */}
@@ -495,9 +544,11 @@ export function DashboardPage() {
                   <LeafletVisibilityMap
                     suburbs={ranks.data?.suburbs ?? []}
                     companyPoint={companyMapPoint}
+                    competitorPins={ranks.data?.map_competitors}
                     radiusKm={radiusKm}
                     radiusLabel={radiusLabel}
                     heightClass="h-[380px]"
+                    scanProgress={scanProgress}
                   />
                 </div>
               </Card>

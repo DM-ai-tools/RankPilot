@@ -1,9 +1,10 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { BarChart3, Globe2, LucideIcon, MapPin, Search } from "lucide-react";
+import { BarChart3, Globe2, KeyRound, LucideIcon, MapPin, Search } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 
-import { saveOnboarding } from "../api/onboarding";
+import { formatApiError } from "../api/client";
+import { fetchMeForAuth, saveOnboarding } from "../api/onboarding";
 import {
   connectWordPress,
   disconnectIntegration,
@@ -16,27 +17,29 @@ import {
   selectGa4Property,
   selectGscProperty,
 } from "../api/integrations";
+import { fetchGoogleAdsCustomers, selectGoogleAdsCustomer } from "../api/googleAds";
+import { generateMonthlyTimeline } from "../api/contentQueue";
 import { enqueueMapsScan } from "../api/scans";
+import { fetchSuburbCatalog } from "../api/suburbs";
 import { useAuthStore } from "../stores/authStore";
+import { normalizePrimaryKeywords, scanKeywordFromPrimary } from "../lib/primaryKeywords";
 
-/* ── City → metro_label mapper ──────────────────────────────────── */
-const CITY_METRO_MAP: Record<string, string> = {
-  sydney: "Sydney, NSW", "new south wales": "Sydney, NSW", nsw: "Sydney, NSW",
-  melbourne: "Melbourne, VIC", victoria: "Melbourne, VIC", vic: "Melbourne, VIC",
-  brisbane: "Brisbane, QLD", queensland: "Brisbane, QLD", qld: "Brisbane, QLD",
-  perth: "Perth, WA", "western australia": "Perth, WA", wa: "Perth, WA",
-  adelaide: "Adelaide, SA", "south australia": "Adelaide, SA", sa: "Adelaide, SA",
-  "gold coast": "Gold Coast, QLD",
-  canberra: "Canberra, ACT", act: "Canberra, ACT",
-  hobart: "Hobart, TAS", tasmania: "Hobart, TAS", tas: "Hobart, TAS",
-  darwin: "Darwin, NT", nt: "Darwin, NT",
-};
-function resolveMetroLabel(city: string): string {
-  return CITY_METRO_MAP[city.trim().toLowerCase()] ?? `${city.trim()}, NSW`;
-}
+const METRO_OPTIONS = [
+  { label: "Melbourne", metro: "Melbourne, VIC" },
+  { label: "Sydney", metro: "Sydney, NSW" },
+  { label: "Brisbane", metro: "Brisbane, QLD" },
+  { label: "Perth", metro: "Perth, WA" },
+  { label: "Adelaide", metro: "Adelaide, SA" },
+  { label: "Gold Coast", metro: "Gold Coast, QLD" },
+  { label: "Canberra", metro: "Canberra, ACT" },
+  { label: "Hobart", metro: "Hobart, TAS" },
+  { label: "Darwin", metro: "Darwin, NT" },
+] as const;
+
+type LocationScope = "city" | "suburb";
 
 /* ── Integration metadata ────────────────────────────────────────── */
-type OAuthType = "gsc" | "gbp" | "ga4";
+type OAuthType = "gsc" | "gbp" | "ga4" | "google_ads";
 interface IntgMeta {
   id:        string;
   icon:      LucideIcon;
@@ -51,15 +54,16 @@ const INTEGRATIONS: IntgMeta[] = [
   /* id must match backend rp_integrations.type ("wordpress") for status + disconnect */
   { id:"wordpress", icon:Globe2, iconBg:"#21759B", name:"WordPress Website", desc:"Allows RankPilot to publish suburb pages automatically", oauthType:null },
   { id:"ga4", icon:BarChart3, iconBg:"#F9AB00", name:"Google Analytics 4 (GA4)", desc:"Shows actual website visitor numbers in your monthly report",  oauthType:"ga4" },
+  { id:"google_ads", icon:KeyRound, iconBg:"#4285F4", name:"Google Ads", desc:"Keyword Planner — related keywords and search volume for your main keyword", oauthType:"google_ads" },
 ];
 
 const SERP_THEME = {
-  navy: "#0F2343",
-  accent: "#72C219",
-  textMuted: "#8092A7",
-  textMid: "#4D6078",
-  border: "#DDE6D1",
-  surface: "#F6F9F2",
+  navy: "#222b26",
+  accent: "#4d8a20",
+  textMuted: "#6b786d",
+  textMid: "#4d584f",
+  border: "#e2e7df",
+  surface: "#f3f7ee",
 };
 
 /* ── Step bar ────────────────────────────────────────────────────── */
@@ -259,18 +263,51 @@ export function OnboardingPage() {
   const navigate           = useNavigate();
   const qc                 = useQueryClient();
   const token              = useAuthStore((s) => s.accessToken);
-  const setNeedsOnboarding = useAuthStore((s) => s.setNeedsOnboarding);
 
   const [step,        setStep]       = useState<1|2|3>(1);
+  const [prefilled,   setPrefilled]  = useState(false);
   const [businessUrl, setUrl]        = useState("");
   const [keyword,     setKeyword]    = useState("");
-  const [city,        setCity]       = useState("");
-  const [radius,      setRadius]     = useState("20");
+  const [metro,         setMetro]       = useState<string>(METRO_OPTIONS[0].metro);
+  const [locationScope, setLocationScope] = useState<LocationScope>("suburb");
+  const [primarySuburb, setPrimarySuburb] = useState("");
+  const [radius,        setRadius]      = useState("20");
   const [showWpModal, setShowWpModal]= useState(false);
   const [showGscModal, setShowGscModal] = useState(false);
   const [showGbpModal, setShowGbpModal] = useState(false);
   const [showGa4Modal, setShowGa4Modal] = useState(false);
+  const [showGoogleAdsModal, setShowGoogleAdsModal] = useState(false);
   const popupRef = useRef<Window | null>(null);
+
+  const profileQ = useQuery({
+    queryKey: ["me", "onboarding", token],
+    queryFn: fetchMeForAuth,
+    enabled: Boolean(token),
+  });
+
+  useEffect(() => {
+    const me = profileQ.data;
+    if (!me || prefilled) return;
+    if (me.business_url?.trim()) setUrl(me.business_url.trim());
+    if (me.primary_keyword?.trim()) setKeyword(me.primary_keyword.trim());
+    if (me.metro_label?.trim()) {
+      const match = METRO_OPTIONS.find((o) => o.metro === me.metro_label.trim());
+      setMetro(match?.metro ?? me.metro_label.trim());
+    }
+    if (me.location_scope === "city" || me.location_scope === "suburb") {
+      setLocationScope(me.location_scope);
+    }
+    if (me.primary_suburb?.trim()) setPrimarySuburb(me.primary_suburb.trim());
+    if (me.search_radius_km) setRadius(String(me.search_radius_km));
+    setPrefilled(true);
+  }, [profileQ.data, prefilled]);
+
+  const suburbCatalogQ = useQuery({
+    queryKey: ["suburb-catalog", metro],
+    queryFn: () => fetchSuburbCatalog(metro),
+    enabled: locationScope === "suburb" && Boolean(metro),
+    staleTime: 300_000,
+  });
 
   /* ── Load current connection status ── */
   const statusQ = useQuery({
@@ -301,6 +338,11 @@ export function OnboardingPage() {
     queryFn: fetchGa4Properties,
     enabled: showGa4Modal,
   });
+  const googleAdsPropsQ = useQuery({
+    queryKey: ["google-ads-customers"],
+    queryFn: fetchGoogleAdsCustomers,
+    enabled: showGoogleAdsModal,
+  });
 
   /* ── Listen for OAuth popup postMessage ── */
   const handlePopupMsg = useCallback((evt: MessageEvent) => {
@@ -311,6 +353,7 @@ export function OnboardingPage() {
       if (d.type === "gsc") setShowGscModal(true);
       if (d.type === "gbp") setShowGbpModal(true);
       if (d.type === "ga4") setShowGa4Modal(true);
+      if (d.type === "google_ads") setShowGoogleAdsModal(true);
     }
     popupRef.current = null;
   }, [qc]);
@@ -325,14 +368,30 @@ export function OnboardingPage() {
     mutationFn: saveOnboarding,
     onSuccess: async () => {
       await qc.invalidateQueries({ queryKey: ["me"] });
+      await qc.invalidateQueries({ queryKey: ["me", "auth-gate"] });
       await qc.invalidateQueries({ queryKey: ["dashboard"] });
       await qc.invalidateQueries({ queryKey: ["ranks"] });
       setStep(2);
     },
   });
 
+  const timeline = useMutation({
+    mutationFn: generateMonthlyTimeline,
+    onSuccess: () => void qc.invalidateQueries({ queryKey: ["content-queue"] }),
+  });
+
+  useEffect(() => {
+    if (step === 3 && !timeline.isPending && !timeline.isSuccess && !timeline.isError) {
+      void timeline.mutate();
+    }
+  }, [step]); // eslint-disable-line react-hooks/exhaustive-deps
+
   const scan = useMutation({
-    mutationFn: () => enqueueMapsScan({ keyword, radius_km: Number(radius) || 25 }),
+    mutationFn: () =>
+      enqueueMapsScan({
+        keyword: scanKeywordFromPrimary(keyword) || undefined,
+        radius_km: locationScope === "suburb" ? Number(radius) || 25 : 100,
+      }),
     onSuccess: (res: { job_id: string; status: string }) => {
       void navigate(`/loading-results?job=${res.job_id}`, { replace: true });
     },
@@ -363,13 +422,19 @@ export function OnboardingPage() {
       await qc.invalidateQueries({ queryKey: ["integrations-status"] });
     },
   });
-
-  if (!token) { void navigate("/login", { replace:true }); return null; }
+  const selectGoogleAds = useMutation({
+    mutationFn: (body: { customer_id: string; customer_name?: string }) => selectGoogleAdsCustomer(body),
+    onSuccess: async () => {
+      setShowGoogleAdsModal(false);
+      await qc.invalidateQueries({ queryKey: ["integrations-status"] });
+      await qc.invalidateQueries({ queryKey: ["google-ads"] });
+    },
+  });
 
   function goToDashboard() {
-    setNeedsOnboarding(false);
     void qc.invalidateQueries({ queryKey: ["me"] });
-    void navigate("/", { replace:true });
+    void qc.invalidateQueries({ queryKey: ["me", "auth-gate"] });
+    void navigate("/", { replace: true });
   }
 
   /* Open Google OAuth popup */
@@ -391,9 +456,6 @@ export function OnboardingPage() {
     <div style={{
       minHeight:"100vh",
       backgroundColor: SERP_THEME.surface,
-      backgroundImage:
-        "radial-gradient(ellipse 80% 50% at 15% 0%, rgba(114,194,25,0.16) 0%, transparent 65%), " +
-        "radial-gradient(ellipse 55% 45% at 85% 100%, rgba(114,194,25,0.08) 0%, transparent 65%)",
       display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", padding:"24px 16px"
     }}>
       {showWpModal && (
@@ -433,9 +495,9 @@ export function OnboardingPage() {
           busy={selectGbp.isPending}
           error={
             gbpPropsQ.isError
-              ? (gbpPropsQ.error as Error).message
+              ? formatApiError(gbpPropsQ.error)
               : selectGbp.isError
-                ? (selectGbp.error as Error).message
+                ? formatApiError(selectGbp.error)
                 : null
           }
           onClose={() => setShowGbpModal(false)}
@@ -462,6 +524,44 @@ export function OnboardingPage() {
           onSelect={(id, name) => void selectGa4.mutate({ property_id: id, property_name: name })}
         />
       )}
+      {showGoogleAdsModal && (
+        <PropertyModal
+          title="Select your Google Ads account"
+          items={(googleAdsPropsQ.data?.items ?? []).map((p: { customer_id: string; resource_name: string }) => ({
+            id: p.customer_id,
+            name: `Customer ${p.customer_id}`,
+            sub: p.resource_name,
+          }))}
+          busy={selectGoogleAds.isPending}
+          error={
+            googleAdsPropsQ.isError
+              ? formatApiError(googleAdsPropsQ.error)
+              : selectGoogleAds.isError
+                ? formatApiError(selectGoogleAds.error)
+                : null
+          }
+          onClose={() => setShowGoogleAdsModal(false)}
+          onSelect={(id) => void selectGoogleAds.mutate({ customer_id: id, customer_name: `Customer ${id}` })}
+        />
+      )}
+
+      {profileQ.isError ? (
+        <div
+          style={{
+            marginBottom: 16,
+            maxWidth: 500,
+            width: "100%",
+            padding: "10px 14px",
+            borderRadius: 8,
+            background: "#FEF2F2",
+            border: "1px solid #FECACA",
+            color: "#B91C1C",
+            fontSize: 12,
+          }}
+        >
+          Could not load saved profile: {formatApiError(profileQ.error)}. You can still fill the form below.
+        </div>
+      ) : null}
 
       {/* Brand */}
       <div style={{ textAlign:"center", marginBottom:24 }}>
@@ -472,7 +572,7 @@ export function OnboardingPage() {
       </div>
 
       {/* Card */}
-      <div style={{ background:"#fff", borderRadius:16, padding:36, width:"100%", maxWidth:500, border:`1px solid ${SERP_THEME.border}`, boxShadow:"0 16px 42px rgba(15,35,67,0.10)" }}>
+      <div style={{ background:"#fff", borderRadius:24, padding:36, width:"100%", maxWidth:500, border:`1px solid ${SERP_THEME.border}`, boxShadow:"0 18px 40px -12px rgba(16,30,20,.18), 0 6px 14px rgba(16,30,20,.06)" }}>
         <StepBar current={step} />
 
         {/* ══ STEP 1 — Business Details ══ */}
@@ -480,17 +580,65 @@ export function OnboardingPage() {
           <>
             <h2 style={{ fontSize:18, fontWeight:800, color:SERP_THEME.navy, marginBottom:6 }}>Tell us about your business</h2>
             <p style={{ fontSize:12, color:SERP_THEME.textMuted, marginBottom:20 }}>RankPilot uses this information to find your business on Google and start tracking your rankings.</p>
-            <form onSubmit={(e)=>{ e.preventDefault(); save.mutate({ business_name: businessUrl.replace(/^https?:\/\//,"").replace(/^www\./,"").split(".")[0]??"", business_url:businessUrl.trim(), primary_keyword:keyword.trim(), metro_label:resolveMetroLabel(city), search_radius_km: Math.min(100, Math.max(5, Number(radius) || 25)) }); }}>
+            <form onSubmit={(e)=>{ e.preventDefault(); save.mutate({ business_name: businessUrl.replace(/^https?:\/\//,"").replace(/^www\./,"").split(".")[0]??"", business_url:businessUrl.trim(), primary_keyword:normalizePrimaryKeywords(keyword), metro_label:metro, location_scope:locationScope, primary_suburb:locationScope==="suburb"?primarySuburb.trim():"", search_radius_km: locationScope==="suburb"?Math.min(100, Math.max(5, Number(radius) || 25)):100 }); }}>
               <Field label="Business Website URL">
                 <input type="text" required style={INPUT} placeholder="https://yourbusiness.com.au" value={businessUrl} onChange={e=>setUrl(e.target.value)} />
               </Field>
-              <Field label="Primary Service (what you do)">
-                <input type="text" required style={INPUT} placeholder="e.g. plumber, electrician, finance broker" value={keyword} onChange={e=>setKeyword(e.target.value)} />
+              <Field
+                label="Primary services (what you do)"
+                hint="Separate multiple services with commas — e.g. digital marketing, seo services, ppc management"
+              >
+                <input
+                  type="text"
+                  required
+                  style={INPUT}
+                  placeholder="e.g. plumber, electrician, finance broker"
+                  value={keyword}
+                  onChange={e=>setKeyword(e.target.value)}
+                />
               </Field>
-              <Field label="Main City / Suburb">
-                <input type="text" required style={INPUT} placeholder="e.g. Melbourne, Brisbane, Sydney" value={city} onChange={e=>setCity(e.target.value)} />
+              <Field label="Target area" hint="City-wide = all suburbs in the metro. Suburb = radius from one suburb.">
+                <select
+                  value={locationScope}
+                  onChange={(e) => setLocationScope(e.target.value as LocationScope)}
+                  style={{ ...INPUT, cursor: "pointer", marginBottom: 8 }}
+                >
+                  <option value="city">City (whole metro)</option>
+                  <option value="suburb">Suburb (local radius)</option>
+                </select>
               </Field>
-              <Field label="Service radius" hint="We scan suburbs inside this distance — categorised for reporting.">
+              <Field label="City">
+                <select
+                  required
+                  value={metro}
+                  onChange={(e) => {
+                    setMetro(e.target.value);
+                    setPrimarySuburb("");
+                  }}
+                  style={{ ...INPUT, cursor: "pointer" }}
+                >
+                  {METRO_OPTIONS.map((o) => (
+                    <option key={o.metro} value={o.metro}>{o.label}</option>
+                  ))}
+                </select>
+              </Field>
+              {locationScope === "suburb" ? (
+                <Field label="Anchor suburb" hint="Maps scan and landing pages centre on this suburb.">
+                  <select
+                    required
+                    value={primarySuburb}
+                    onChange={(e) => setPrimarySuburb(e.target.value)}
+                    style={{ ...INPUT, cursor: "pointer" }}
+                  >
+                    <option value="">Select suburb…</option>
+                    {(suburbCatalogQ.data?.suburbs ?? []).map((s) => (
+                      <option key={s} value={s}>{s}</option>
+                    ))}
+                  </select>
+                </Field>
+              ) : null}
+              {locationScope === "suburb" ? (
+              <Field label="Service radius" hint="We scan suburbs inside this distance from your anchor suburb.">
                 {(() => {
                   const BANDS = [
                     { label: "0–5 km (local block)",    max: 5  },
@@ -511,7 +659,7 @@ export function OnboardingPage() {
                           padding: "4px 10px",
                           borderRadius: 20,
                           border: active ? "none" : "1px solid #D1D5DB",
-                          background: active ? "#72C219" : "#F9FAFB",
+                          background: active ? "#4d8a20" : "#F9FAFB",
                           color: active ? "#fff" : "#374151",
                           fontSize: 12,
                           fontWeight: active ? 700 : 500,
@@ -540,8 +688,9 @@ export function OnboardingPage() {
                   );
                 })()}
               </Field>
+              ) : null}
               {save.isError && <p style={{ color:"#DC2626", fontSize:12, marginBottom:8 }}>{(save.error as Error).message}</p>}
-              <button type="submit" disabled={save.isPending||!businessUrl.trim()||!keyword.trim()||!city.trim()} style={{ ...CTA_BASE, opacity:save.isPending?0.6:1 }}>
+              <button type="submit" disabled={save.isPending||!businessUrl.trim()||!keyword.trim()||!metro||(locationScope==="suburb"&&!primarySuburb)} style={{ ...CTA_BASE, opacity:save.isPending?0.6:1 }}>
                 {save.isPending ? "Saving\u2026" : "Continue \u2192 Connect Accounts"}
               </button>
             </form>
@@ -558,6 +707,7 @@ export function OnboardingPage() {
               {INTEGRATIONS.map((intg) => {
                 const isConn = Boolean(connStatus[intg.id]?.connected);
                 const selectedProperty = connStatus[intg.id]?.extra?.selected_property;
+                const selectedCustomer = connStatus[intg.id]?.extra?.customer_id;
                 return (
                   <div key={intg.id} style={{ display:"flex", alignItems:"center", justifyContent:"space-between", padding:"12px 14px", border:`1px solid ${SERP_THEME.border}`, borderRadius:9, marginBottom:10 }}>
                     {/* Left: icon + text */}
@@ -572,6 +722,10 @@ export function OnboardingPage() {
                           <div style={{ marginTop: 2, fontSize: 10, fontWeight: 700, color: "#15803D" }}>
                             Selected: {String(selectedProperty)}
                           </div>
+                        ) : intg.id === "google_ads" && selectedCustomer ? (
+                          <div style={{ marginTop: 2, fontSize: 10, fontWeight: 700, color: "#15803D" }}>
+                            Account: {String(selectedCustomer)}
+                          </div>
                         ) : intg.id === "wordpress" && connStatus.wordpress?.extra?.site_url ? (
                           <div style={{ marginTop: 2, fontSize: 10, fontWeight: 700, color: "#15803D" }}>
                             Site: {String(connStatus.wordpress.extra.site_url)}
@@ -582,7 +736,7 @@ export function OnboardingPage() {
                     {/* Right: connect / disconnect */}
                     {isConn ? (
                       <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                        {(intg.id === "gsc" || intg.id === "gbp" || intg.id === "ga4") ? (
+                        {(intg.id === "gsc" || intg.id === "gbp" || intg.id === "ga4" || intg.id === "google_ads") ? (
                           <button
                             type="button"
                             style={{ padding:"5px 10px", borderRadius:6, fontSize:11, fontWeight:700, border:`1px solid ${SERP_THEME.border}`, cursor:"pointer", background:"#fff", color:"#2E4F7F", whiteSpace:"nowrap" }}
@@ -590,9 +744,16 @@ export function OnboardingPage() {
                               if (intg.id === "gsc") setShowGscModal(true);
                               if (intg.id === "gbp") setShowGbpModal(true);
                               if (intg.id === "ga4") setShowGa4Modal(true);
+                              if (intg.id === "google_ads") setShowGoogleAdsModal(true);
                             }}
                           >
-                            {selectedProperty ? "Change Property" : "Select Property"}
+                            {intg.id === "google_ads"
+                              ? selectedCustomer
+                                ? "Change Account"
+                                : "Select Account"
+                              : selectedProperty
+                                ? "Change Property"
+                                : "Select Property"}
                           </button>
                         ) : null}
                         <button type="button"
@@ -649,17 +810,28 @@ export function OnboardingPage() {
             <h2 style={{ fontSize:22, fontWeight:800, color:SERP_THEME.navy, marginBottom:8 }}>You&apos;re all set!</h2>
             <p style={{ fontSize:13, color:SERP_THEME.textMid, marginBottom:4 }}>Your first Maps ranking scan has been queued.</p>
             <p style={{ fontSize:12, color:SERP_THEME.textMuted, marginBottom:24 }}>Rankings and your visibility score will appear on the dashboard in 2&ndash;4 minutes once DataForSEO finishes checking each suburb.</p>
+            {timeline.isPending ? (
+              <p style={{ fontSize:12, color:SERP_THEME.textMid, marginBottom:16 }}>Building your 4-week Ahrefs content plan…</p>
+            ) : timeline.isSuccess ? (
+              <p style={{ fontSize:12, color:"#15803D", marginBottom:16 }}>
+                {timeline.data.generated} items queued for the next 4 weeks (GBP posts + landing pages).
+              </p>
+            ) : timeline.isError ? (
+              <p style={{ fontSize:11, color:"#B45309", marginBottom:16 }}>
+                Content timeline: {formatApiError(timeline.error)} — you can generate it later from Content Engine.
+              </p>
+            ) : null}
 
             <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10, marginBottom:24, textAlign:"left" }}>
               {[
                 { label:"Business URL", val:businessUrl||"\u2014" },
-                { label:"Keyword",      val:keyword||"\u2014"     },
-                { label:"City",         val:city||"\u2014"        },
-                { label:"Radius",       val:`${radius} km`        },
+                { label:"Keywords",     val:keyword||"\u2014"     },
+                { label:"Target",       val:locationScope==="city"?`City — ${metro.split(",")[0]}`:`Suburb — ${primarySuburb||metro.split(",")[0]}` },
+                { label: locationScope==="city" ? "Scope" : "Radius", val: locationScope==="city" ? "Whole metro" : `${radius} km` },
               ].map((d) => (
                 <div key={d.label} style={{ background:"#F0FDF4", border:"1px solid #DCFCE7", borderRadius:8, padding:"10px 12px" }}>
                   <div style={{ fontSize:9, fontWeight:700, textTransform:"uppercase", letterSpacing:"0.6px", color:"#15803D", marginBottom:3 }}>{d.label}</div>
-                  <div style={{ fontSize:11, fontWeight:600, color:SERP_THEME.navy, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{d.val}</div>
+                  <div style={{ fontSize:11, fontWeight:600, color:SERP_THEME.navy, overflow:"hidden", textOverflow:"ellipsis", whiteSpace: d.label === "Keywords" ? "normal" : "nowrap" }}>{d.val}</div>
                 </div>
               ))}
             </div>

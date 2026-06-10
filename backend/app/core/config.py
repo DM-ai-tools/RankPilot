@@ -74,6 +74,32 @@ class Settings(BaseSettings):
     anthropic_api_key: str = ""
     anthropic_content_model: str = ""  # optional; default Sonnet 4.6 in content_generation_service
     openai_api_key: str = ""
+    # OpenRouter (Perplexity Sonar) — SEO Website meta + GBP post direction prompts
+    openrouter_api_key: str = Field(
+        default="",
+        validation_alias=AliasChoices("OPENROUTER_API_KEY", "PERPLEXITY_API_KEY"),
+    )
+    openrouter_model: str = Field(
+        default="perplexity/sonar-pro",
+        validation_alias=AliasChoices("OPENROUTER_MODEL", "PERPLEXITY_MODEL"),
+    )
+    openrouter_prompt_model: str = Field(
+        default="openai/gpt-4o-mini",
+        validation_alias=AliasChoices("OPENROUTER_PROMPT_MODEL", "OPENAI_PROMPT_MODEL"),
+    )
+
+    # --- Runway (GBP AI images — Gemini / Nano Banana via Runway API) ---
+    runwayml_api_key: str = Field(default="", validation_alias=AliasChoices("RUNWAYML_API_KEY", "RUNWAY_API_KEY"))
+    runwayml_base_url: str = Field(
+        default="https://api.dev.runwayml.com/v1",
+        validation_alias=AliasChoices("RUNWAYML_BASE_URL", "RUNWAY_BASE_URL"),
+    )
+    runwayml_api_version: str = Field(default="2024-11-06", validation_alias="RUNWAYML_API_VERSION")
+    runwayml_model_image: str = Field(
+        default="gemini_2.5_flash",
+        validation_alias=AliasChoices("RUNWAYML_MODEL_IMAGE", "RUNWAY_MODEL_IMAGE"),
+    )
+    runwayml_image_size: str = Field(default="1K", validation_alias="RUNWAYML_IMAGE_SIZE")
 
     # --- L1 SERP / ranks (DataForSEO HTTP Basic — accept common .env spellings) ---
     dataforseo_login: str = Field(
@@ -89,12 +115,32 @@ class Settings(BaseSettings):
         ),
     )
 
+    # --- Ahrefs Keywords Explorer (live volume + KD) ---
+    ahrefs_api_key: str = Field(default="", validation_alias=AliasChoices("AHREFS_API_KEY", "AHREFS_TOKEN"))
+
     # --- Google (GBP, GSC, GA4, PageSpeed, Rich Results, KG) ---
     google_client_id: str = ""
     google_client_secret: str = ""
+    # Google Ads API (Keyword Planner) — developer token from Ads UI → Tools → API Center
+    google_ads_developer_token: str = Field(
+        default="",
+        validation_alias=AliasChoices("GOOGLE_ADS_DEVELOPER_TOKEN", "GOOGLE_ADS_API_DEVELOPER_TOKEN"),
+    )
+    google_ads_login_customer_id: str = Field(
+        default="",
+        validation_alias=AliasChoices("GOOGLE_ADS_LOGIN_CUSTOMER_ID", "GOOGLE_ADS_MCC_ID"),
+    )
     # Base URL where Google OAuth callback is reachable (no trailing slash)
     # Local dev: http://localhost:8000  |  Prod: https://api.yourdomain.com
     google_redirect_base_url: str = "http://localhost:8000"
+    # Public URL Google can reach to fetch GBP photos (sourceUrl). Defaults to google_redirect_base_url.
+    public_api_base_url: str = Field(
+        default="",
+        validation_alias=AliasChoices("PUBLIC_API_BASE_URL", "RANKPILOT_PUBLIC_API_URL"),
+    )
+    # Optional: host GBP photos for Google sourceUrl when running on localhost (free at imgbb.com / freeimage.host)
+    imgbb_api_key: str = Field(default="", validation_alias=AliasChoices("IMGBB_API_KEY",))
+    freeimage_api_key: str = Field(default="", validation_alias=AliasChoices("FREEIMAGE_API_KEY",))
     google_places_api_key: str = ""
     google_pagespeed_key: str = ""
     google_kg_api_key: str = ""
@@ -132,3 +178,46 @@ class Settings(BaseSettings):
 @lru_cache
 def get_settings() -> Settings:
     return Settings()
+
+
+def get_ahrefs_api_key() -> str:
+    """Ahrefs key from settings; re-reads .env if cache is stale (e.g. key added without restart)."""
+    key = (get_settings().ahrefs_api_key or "").strip()
+    if key:
+        return key
+    get_settings.cache_clear()
+    return (get_settings().ahrefs_api_key or "").strip()
+
+
+def get_openrouter_api_key() -> str:
+    """OpenRouter key from settings; re-reads .env if cache is stale."""
+    key = (get_settings().openrouter_api_key or "").strip()
+    if key:
+        return key
+    get_settings.cache_clear()
+    return (get_settings().openrouter_api_key or "").strip()
+
+
+def get_openrouter_model() -> str:
+    model = (get_settings().openrouter_model or "").strip()
+    if model:
+        return model
+    get_settings.cache_clear()
+    return (get_settings().openrouter_model or "perplexity/sonar-pro").strip()
+
+
+def get_openrouter_prompt_model() -> str:
+    model = (get_settings().openrouter_prompt_model or "").strip()
+    if model:
+        return model if "/" in model else f"openai/{model}"
+    get_settings.cache_clear()
+    raw = (get_settings().openrouter_prompt_model or "openai/gpt-4o-mini").strip()
+    return raw if "/" in raw else f"openai/{raw}"
+
+
+def get_openai_api_key() -> str:
+    key = (get_settings().openai_api_key or "").strip()
+    if key:
+        return key
+    get_settings.cache_clear()
+    return (get_settings().openai_api_key or "").strip()

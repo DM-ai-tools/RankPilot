@@ -17,16 +17,19 @@ from urllib.parse import urlparse
 import httpx
 
 from app.core.config import Settings
+from app.lib.maps_pack_rank import infer_maps_pack_rank
 
 logger = logging.getLogger(__name__)
 
 _BASE = "https://api.dataforseo.com/v3"
 # Polling: short sleeps early (tasks often finish within ~15s), then back off.
-_POLL_FAST_S = 3
-_POLL_INTERVAL_S = 7
-_POLL_FAST_ATTEMPTS = 6
-_MAX_POLLS = 18  # ~2 min worst-case per task
+_POLL_FAST_S = 2
+_POLL_INTERVAL_S = 5
+_POLL_FAST_ATTEMPTS = 8
+_MAX_POLLS = 12  # ~1 min worst-case per task
+_MAX_REVIEWS_POLLS = 24  # Business Data reviews queue can take 60–90s
 _TASK_GET_HTTP_RETRIES = 5  # retry transient 5xx / network on task_get
+_MIN_MAPS_ITEMS_TO_STOP = 3  # stop widening zoom once we have a usable local pack
 
 # DataForSEO location_name uses full region names, comma-separated, no spaces
 # (see https://docs.dataforseo.com/v3/serp/google/locations/ — e.g. "Alabama,United States").
@@ -96,7 +99,7 @@ class DataForSEOClient:
             self._http_client = httpx.AsyncClient(
                 auth=self._auth,
                 timeout=httpx.Timeout(30.0, connect=15.0),
-                limits=httpx.Limits(max_connections=32, max_keepalive_connections=16),
+                limits=httpx.Limits(max_connections=48, max_keepalive_connections=24),
             )
         return self._http_client
 
@@ -138,8 +141,6 @@ class DataForSEOClient:
         zoom_steps: list[tuple[int, bool | None]] = [
             (17, None),
             (13, None),
-            (11, None),
-            (9, False),
         ]
         last_nonempty: list[dict] = []
         for zoom, search_places in zoom_steps:
@@ -160,6 +161,9 @@ class DataForSEOClient:
             rank = self._find_rank(items, business_url, business_name=business_name)
             if rank is not None:
                 return rank, items
+            # Business not in pack but we already have local results — skip wider zoom.
+            if len(items) >= _MIN_MAPS_ITEMS_TO_STOP:
+                return None, items
         return None, last_nonempty
 
     async def get_maps_rank(
@@ -215,6 +219,201 @@ class DataForSEOClient:
             return self._pick_latest_monthly_volume(monthly)
         return None
 
+    async def get_location_keyword_volume(
+        self,
+        keyword: str,
+        location_name: str,
+        language_code: str = "en",
+    ) -> int | None:
+        """Return latest full-month keyword volume for a specific location string."""
+        task_id = await self._post_search_volume_task_for_location(
+            keyword,
+            location_name,
+            language_code,
+        )
+        if not task_id:
+            return None
+        items = await self._poll_search_volume_task(task_id)
+        if not items:
+            return None
+        return self._volume_from_search_item(items[0])
+
+    async def get_search_volumes_live(
+        self,
+        keywords: list[str],
+        state_abbr: str,
+        language_code: str = "en",
+    ) -> list[dict[str, object]]:
+        """Live Google Ads search volumes for many keywords at AU state geo."""
+        kws = [re.sub(r"\s+", " ", (k or "").strip()) for k in keywords if (k or "").strip()]
+        if not kws:
+            return []
+        location_name = _state_location_name(state_abbr)
+        task = {
+            "keywords": kws[:700],
+            "location_name": location_name,
+            "language_code": language_code,
+        }
+        c = self._http()
+        try:
+            r = await c.post(f"{_BASE}/keywords_data/google_ads/search_volume/live", json=[task])
+            r.raise_for_status()
+            return self._parse_live_keyword_rows(r.json())
+        except httpx.HTTPStatusError as exc:
+            if exc.response.status_code not in (402, 403, 404):
+                raise
+            logger.info("DataForSEO search_volume/live unavailable (%s), using task API", exc.response.status_code)
+            return await self.get_search_volumes_batch(kws, state_abbr, language_code=language_code)
+
+    async def get_search_volumes_batch(
+        self,
+        keywords: list[str],
+        state_abbr: str,
+        language_code: str = "en",
+    ) -> list[dict[str, object]]:
+        """Task-based search volumes (same API as Maps scans)."""
+        kws = [re.sub(r"\s+", " ", (k or "").strip()) for k in keywords if (k or "").strip()]
+        if not kws:
+            return []
+        task_id = await self._post_search_volume_task_multi(kws[:700], state_abbr, language_code)
+        if not task_id:
+            return []
+        items = await self._poll_search_volume_task(task_id)
+        out: list[dict[str, object]] = []
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            kw = str(item.get("keyword") or "").strip()
+            if not kw:
+                continue
+            vol = self._volume_from_search_item(item)
+            comp = item.get("competition")
+            comp_name = comp if isinstance(comp, str) else (comp.name if hasattr(comp, "name") else None)
+            out.append(
+                {
+                    "keyword": kw,
+                    "avg_monthly_searches": int(vol or 0),
+                    "competition": comp_name,
+                    "competition_index": int(item.get("competition_index") or 0),
+                }
+            )
+        return out
+
+    async def get_keywords_for_keywords_live(
+        self,
+        keywords: list[str],
+        state_abbr: str,
+        *,
+        language_code: str = "en",
+        limit: int = 40,
+    ) -> list[dict[str, object]]:
+        """Live Keyword Planner suggestions for seed keyword(s) at AU state geo."""
+        seeds = [re.sub(r"\s+", " ", (k or "").strip()) for k in keywords if (k or "").strip()]
+        if not seeds:
+            return []
+        task = {
+            "keywords": seeds[:10],
+            "location_name": _state_location_name(state_abbr),
+            "language_code": language_code,
+        }
+        c = self._http()
+        try:
+            r = await c.post(f"{_BASE}/keywords_data/google_ads/keywords_for_keywords/live", json=[task])
+            r.raise_for_status()
+            rows = self._parse_live_keyword_rows(r.json())
+        except httpx.HTTPStatusError as exc:
+            if exc.response.status_code not in (402, 403, 404):
+                raise
+            logger.info(
+                "DataForSEO keywords_for_keywords/live unavailable (%s), using task API",
+                exc.response.status_code,
+            )
+            rows = await self.get_keywords_for_keywords_batch(seeds, state_abbr, language_code=language_code)
+        rows.sort(key=lambda x: int(x.get("avg_monthly_searches") or 0), reverse=True)
+        return rows[: max(5, min(limit, 100))]
+
+    async def get_keywords_for_keywords_batch(
+        self,
+        keywords: list[str],
+        state_abbr: str,
+        language_code: str = "en",
+    ) -> list[dict[str, object]]:
+        seeds = [re.sub(r"\s+", " ", (k or "").strip()) for k in keywords if (k or "").strip()]
+        if not seeds:
+            return []
+        task_id = await self._post_keywords_for_keywords_task(seeds[:10], state_abbr, language_code)
+        if not task_id:
+            return []
+        items = await self._poll_keywords_for_keywords_task(task_id)
+        out: list[dict[str, object]] = []
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            kw = str(item.get("keyword") or "").strip()
+            if not kw:
+                continue
+            vol = self._volume_from_search_item(item)
+            comp = item.get("competition")
+            comp_name = comp if isinstance(comp, str) else (comp.name if hasattr(comp, "name") else None)
+            out.append(
+                {
+                    "keyword": kw,
+                    "avg_monthly_searches": int(vol or 0),
+                    "competition": comp_name,
+                    "competition_index": int(item.get("competition_index") or 0),
+                }
+            )
+        return out
+
+    def _volume_from_search_item(self, item: dict) -> int | None:
+        monthly = item.get("monthly_searches")
+        if isinstance(monthly, list):
+            strict_prev = self._pick_exact_previous_month_volume(monthly)
+            if strict_prev is not None:
+                return strict_prev
+        try:
+            agg = int(item["search_volume"]) if item.get("search_volume") is not None else None
+        except (TypeError, ValueError):
+            agg = None
+        if agg is not None:
+            return agg
+        if isinstance(monthly, list):
+            return self._pick_latest_monthly_volume(monthly)
+        return None
+
+    def _parse_live_keyword_rows(self, data: dict) -> list[dict[str, object]]:
+        tasks = (data.get("tasks") or [{}])[0]
+        code = tasks.get("status_code")
+        if code != 20000:
+            logger.warning(
+                "DataForSEO live keywords status %s: %s",
+                code,
+                tasks.get("status_message"),
+            )
+            return []
+        result = tasks.get("result") or []
+        if not isinstance(result, list):
+            return []
+        out: list[dict[str, object]] = []
+        for item in result:
+            if not isinstance(item, dict):
+                continue
+            kw = str(item.get("keyword") or "").strip()
+            if not kw:
+                continue
+            vol = self._volume_from_search_item(item)
+            comp = item.get("competition")
+            comp_name = comp.name if hasattr(comp, "name") else (str(comp) if comp else None)
+            out.append(
+                {
+                    "keyword": kw,
+                    "avg_monthly_searches": int(vol or 0),
+                    "competition": comp_name,
+                    "competition_index": int(item.get("competition_index") or 0),
+                }
+            )
+        return out
+
     # ------------------------------------------------------------------ #
     # Internal                                                             #
     # ------------------------------------------------------------------ #
@@ -269,9 +468,86 @@ class DataForSEOClient:
         state_abbr: str,
         language_code: str,
     ) -> str | None:
+        return await self._post_search_volume_task_multi([keyword], state_abbr, language_code)
+
+    async def _post_search_volume_task_multi(
+        self,
+        keywords: list[str],
+        state_abbr: str,
+        language_code: str,
+    ) -> str | None:
+        kws = [k for k in keywords if (k or "").strip()]
+        if not kws:
+            return None
+        task = {
+            "keywords": kws,
+            "location_name": _state_location_name(state_abbr),
+            "language_code": language_code,
+        }
+        c = self._http()
+        r = await c.post(f"{_BASE}/keywords_data/google_ads/search_volume/task_post", json=[task])
+        if r.status_code == 402:
+            raise httpx.HTTPStatusError(
+                "DataForSEO account balance too low for keyword volume API",
+                request=r.request,
+                response=r,
+            )
+        r.raise_for_status()
+        data = r.json()
+        tasks = (data.get("tasks") or [{}])[0]
+        sc = tasks.get("status_code")
+        if sc != 20100:
+            logger.warning(
+                "DataForSEO search_volume task_post status %s: %s",
+                sc,
+                tasks.get("status_message"),
+            )
+            return None
+        tid = tasks.get("id")
+        return str(tid) if tid else None
+
+    async def _post_keywords_for_keywords_task(
+        self,
+        keywords: list[str],
+        state_abbr: str,
+        language_code: str,
+    ) -> str | None:
+        kws = [k for k in keywords if (k or "").strip()]
+        if not kws:
+            return None
+        task = {
+            "keywords": kws,
+            "location_name": _state_location_name(state_abbr),
+            "language_code": language_code,
+        }
+        c = self._http()
+        r = await c.post(f"{_BASE}/keywords_data/google_ads/keywords_for_keywords/task_post", json=[task])
+        r.raise_for_status()
+        data = r.json()
+        tasks = (data.get("tasks") or [{}])[0]
+        sc = tasks.get("status_code")
+        if sc != 20100:
+            logger.warning(
+                "DataForSEO keywords_for_keywords task_post status %s: %s",
+                sc,
+                tasks.get("status_message"),
+            )
+            return None
+        tid = tasks.get("id")
+        return str(tid) if tid else None
+
+    async def _post_search_volume_task_for_location(
+        self,
+        keyword: str,
+        location_name: str,
+        language_code: str,
+    ) -> str | None:
+        loc = (location_name or "").strip()
+        if not loc:
+            return None
         task = {
             "keywords": [keyword],
-            "location_name": _state_location_name(state_abbr),
+            "location_name": loc,
             "language_code": language_code,
         }
         c = self._http()
@@ -282,9 +558,10 @@ class DataForSEOClient:
         sc = tasks.get("status_code")
         if sc != 20100:
             logger.warning(
-                "DataForSEO search_volume task_post status %s: %s",
+                "DataForSEO search_volume task_post (location) status %s: %s (location=%s)",
                 sc,
                 tasks.get("status_message"),
+                loc,
             )
             return None
         tid = tasks.get("id")
@@ -389,6 +666,37 @@ class DataForSEOClient:
             return []
         return []
 
+    async def _poll_keywords_for_keywords_task(self, task_id: str) -> list[dict]:
+        c = self._http()
+        for attempt in range(_MAX_POLLS):
+            r = await c.get(
+                f"{_BASE}/keywords_data/google_ads/keywords_for_keywords/task_get/{task_id}"
+            )
+            r.raise_for_status()
+            data = r.json()
+            tasks = (data.get("tasks") or [{}])[0]
+            code = tasks.get("status_code")
+            if code == 20000:
+                result = tasks.get("result") or []
+                if isinstance(result, list):
+                    return [x for x in result if isinstance(x, dict)]
+                logger.warning(
+                    "DataForSEO keywords_for_keywords task_get unexpected shape: %s",
+                    type(result),
+                )
+                return []
+            if code in (40601, 40602, 40600):
+                await asyncio.sleep(self._poll_sleep_s(attempt))
+                continue
+            logger.warning(
+                "DataForSEO keywords_for_keywords poll status %s: %s (attempt %d)",
+                code,
+                tasks.get("status_message"),
+                attempt,
+            )
+            return []
+        return []
+
     def _previous_year_month(self) -> tuple[int, int]:
         now = datetime.now(UTC)
         yy = now.year
@@ -442,7 +750,9 @@ class DataForSEOClient:
             d = _domain(raw)
             return bool(d) and (d == target or d.endswith("." + target))
 
+        pack_order = 0
         for item in items:
+            pack_order += 1
             bits = (
                 item.get("domain"),
                 item.get("url"),
@@ -457,15 +767,7 @@ class DataForSEOClient:
                     continue
             elif not domain_match:
                 continue
-            pos = item.get("rank_group")
-            if pos is None:
-                pos = item.get("rank_absolute")
-            if pos is None:
-                continue
-            try:
-                return int(pos)
-            except (TypeError, ValueError):
-                continue
+            return infer_maps_pack_rank(item, pack_order)
         return None
 
     async def _fetch_google_reviews_task_get_json(self, client: httpx.AsyncClient, task_id: str) -> dict | None:
@@ -532,7 +834,7 @@ class DataForSEOClient:
             return None
         task_id = str(tid)
 
-        for attempt in range(_MAX_POLLS):
+        for attempt in range(_MAX_REVIEWS_POLLS):
             payload = await self._fetch_google_reviews_task_get_json(c, task_id)
             if payload is None:
                 await asyncio.sleep(self._poll_sleep_s(attempt))
@@ -555,4 +857,9 @@ class DataForSEOClient:
                 tsk.get("status_message"),
             )
             return None
+        logger.warning(
+            "DataForSEO google reviews task_get timed out after %d polls (task=%s)",
+            _MAX_REVIEWS_POLLS,
+            task_id[:16],
+        )
         return None

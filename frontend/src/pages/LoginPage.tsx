@@ -3,7 +3,9 @@ import { Eye, EyeOff } from "lucide-react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 
 import { loginRequest } from "../api/auth";
+import { fetchMeForAuth } from "../api/onboarding";
 import { Button } from "../components/ui/Button";
+import { isProfileComplete, postLoginPath } from "../lib/profile";
 import { useAuthStore } from "../stores/authStore";
 
 type LocState = { from?: string };
@@ -12,7 +14,6 @@ export function LoginPage() {
   const navigate = useNavigate();
   const location = useLocation();
   const setToken = useAuthStore((s) => s.setAccessToken);
-  const setNeedsOnboarding = useAuthStore((s) => s.setNeedsOnboarding);
   const existing = useAuthStore((s) => s.accessToken);
   const [username, setUsername] = useState("admin");
   const [password, setPassword] = useState("");
@@ -23,8 +24,22 @@ export function LoginPage() {
   const from = (location.state as LocState | null)?.from ?? "/";
 
   useEffect(() => {
-    // Avoid redirect race during submit: token is set before onboarding gate is decided.
-    if (!pending && existing) void navigate(from, { replace: true });
+    if (pending || !existing) return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const me = await fetchMeForAuth();
+        if (cancelled) return;
+        void navigate(postLoginPath(isProfileComplete(me), from), { replace: true });
+      } catch (e) {
+        if (!cancelled) {
+          setErr(e instanceof Error ? e.message : "Could not load profile — is the backend running?");
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
   }, [existing, from, navigate, pending]);
 
   async function onSubmit(e: React.FormEvent) {
@@ -34,10 +49,10 @@ export function LoginPage() {
     try {
       const res = await loginRequest(username, password);
       setToken(res.access_token);
-      // Product flow: after every sign-in, always send user through onboarding first.
-      setNeedsOnboarding(true);
-      void navigate("/onboarding", { replace: true });
+      const me = await fetchMeForAuth();
+      void navigate(postLoginPath(isProfileComplete(me), from), { replace: true });
     } catch (e2) {
+      setToken(null);
       setErr(e2 instanceof Error ? e2.message : "Sign-in failed");
     } finally {
       setPending(false);
@@ -45,24 +60,17 @@ export function LoginPage() {
   }
 
   return (
-    <div
-      className="flex min-h-screen flex-col items-center justify-center px-4 py-10"
-      style={{
-        backgroundColor: "#EDF4DD",
-        backgroundImage:
-          "radial-gradient(ellipse 80% 50% at 15% 0%, rgba(114,194,25,0.18) 0%, transparent 65%), " +
-          "radial-gradient(ellipse 55% 45% at 85% 100%, rgba(114,194,25,0.10) 0%, transparent 65%)",
-      }}
-    >
+    <div className="flex min-h-screen flex-col items-center justify-center bg-rp-shell px-4 py-10">
       <div className="mb-6 text-center">
-        <div className="text-3xl font-extrabold tracking-tight text-navy">
-          Rank<span className="text-[#72C219]">Pilot</span>
+        <div className="text-3xl font-extrabold tracking-tight text-neutral-900">
+          Rank<span className="text-brand-400">Pilot</span>
         </div>
+        <p className="mt-1 text-sm text-neutral-500">Growth OS for local businesses</p>
       </div>
 
       <form
         onSubmit={(e) => void onSubmit(e)}
-        className="w-full max-w-lg rounded-[18px] border border-rp-border bg-white p-6 shadow-card sm:p-7"
+        className="w-full max-w-lg rounded-xl border border-neutral-200 bg-white p-6 shadow-lg sm:p-7"
       >
         <div className="mb-5 flex flex-col items-center text-center">
           <img
@@ -74,7 +82,7 @@ export function LoginPage() {
             Sign in
           </h1>
           <p className="mt-2 text-[13px] font-medium text-rp-tmid">
-            Enter username and password to access the main page.
+            Sign in to open your dashboard. New accounts complete business setup on the next screen.
           </p>
         </div>
 
@@ -102,7 +110,7 @@ export function LoginPage() {
           <button
             type="button"
             onClick={() => setShowPassword((v) => !v)}
-            className="absolute right-2.5 top-1/2 inline-flex h-8 w-8 -translate-y-1/2 items-center justify-center rounded-lg bg-rp-light text-rp-tmid hover:bg-[#72C219]/15 hover:text-[#72C219]"
+            className="absolute right-2.5 top-1/2 inline-flex h-8 w-8 -translate-y-1/2 items-center justify-center rounded-sm bg-neutral-50 text-neutral-600 hover:bg-brand-50 hover:text-brand-600"
             aria-label={showPassword ? "Hide password" : "Show password"}
           >
             {showPassword ? <EyeOff className="h-4.5 w-4.5" /> : <Eye className="h-4.5 w-4.5" />}
@@ -120,7 +128,11 @@ export function LoginPage() {
         </Button>
       </form>
 
-      <Link to="/onboarding" className="mt-6 text-sm font-semibold text-[#72C219] hover:underline">
+      <Link
+        to="/onboarding"
+        state={{ from: "/onboarding" }}
+        className="mt-6 text-sm font-semibold text-[#72C219] hover:underline"
+      >
         New here? Onboarding →
       </Link>
 

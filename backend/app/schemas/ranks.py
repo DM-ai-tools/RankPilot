@@ -12,7 +12,7 @@ class SuburbRankRow(BaseModel):
     lng: float | None
     population: int | None
     rank_position: int | None
-    monthly_volume_proxy: int = Field(description="Monthly keyword searches (state-wise via DataForSEO; population fallback)")
+    monthly_volume_proxy: int = Field(description="Monthly search volume from Ahrefs for '{keyword} {suburb}'")
 
 
 class MapPackPlace(BaseModel):
@@ -21,7 +21,22 @@ class MapPackPlace(BaseModel):
     title: str
     lat: float
     lng: float
-    rank: int | None = None
+    rank: int | None = Field(
+        default=None,
+        description="Best pack position when seen in one suburb; same as pack_rank_best when suburb_scan_count=1",
+    )
+    pack_rank_best: int | None = Field(
+        default=None,
+        description="Lowest (best) pack position across suburb scans for this outlet",
+    )
+    pack_rank_worst: int | None = Field(
+        default=None,
+        description="Highest (worst) pack position across suburb scans for this outlet",
+    )
+    suburb_scan_count: int = Field(
+        default=1,
+        description="How many suburb SERP snapshots included this outlet",
+    )
     domain: str | None = None
     url: str | None = None
     address: str | None = None
@@ -40,4 +55,8 @@ class SuburbRanksResponse(BaseModel):
     map_competitors: list[MapPackPlace] = Field(
         default_factory=list,
         description="Deduped Maps pack listings with lat/lng from latest stored SERP snapshots",
+    )
+    volume_source: str = Field(
+        default="none",
+        description="Source of monthly_volume_proxy on keyword pages: ahrefs | none | ahrefs_error",
     )

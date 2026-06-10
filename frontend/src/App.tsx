@@ -5,7 +5,6 @@ import { RequireAuth } from "./components/RequireAuth";
 import { RequireOnboarded } from "./components/RequireOnboarded";
 import { ChatPage } from "./pages/ChatPage";
 import { CitationsPage } from "./pages/CitationsPage";
-import { ContentQueuePage } from "./pages/ContentQueuePage";
 import { DashboardPage } from "./pages/DashboardPage";
 import { GbpPage } from "./pages/GbpPage";
 import { NewScanPage } from "./pages/NewScanPage";
@@ -15,6 +14,7 @@ import { RanksPage } from "./pages/RanksPage";
 import { ReportsPage } from "./pages/ReportsPage";
 import { ResultsLoadingPage } from "./pages/ResultsLoadingPage";
 import { ReviewsPage } from "./pages/ReviewsPage";
+import { SeoWebsitePage } from "./pages/SeoWebsitePage";
 import { SettingsPage } from "./pages/SettingsPage";
 import { LoginPage } from "./pages/LoginPage";
 import { PrivacyPolicyPage } from "./pages/PrivacyPolicyPage";
@@ -40,10 +40,11 @@ export default function App() {
             <Route path="heatmap" element={<Navigate to="/map" replace />} />
             <Route path="map" element={<VisibilityMapPage />} />
             <Route path="opportunities" element={<OpportunitiesPage />} />
-            <Route path="content" element={<ContentQueuePage />} />
+            <Route path="content" element={<SeoWebsitePage />} />
             <Route path="scan" element={<NewScanPage />} />
             <Route path="ranks" element={<RanksPage />} />
             <Route path="gbp" element={<GbpPage />} />
+            <Route path="seo-website" element={<Navigate to="/content" replace />} />
             <Route path="citations" element={<CitationsPage />} />
             <Route path="reviews" element={<ReviewsPage />} />
             <Route path="chat" element={<ChatPage />} />
@@ -52,6 +53,8 @@ export default function App() {
           </Route>
         </Route>
       </Route>
+
+      <Route path="*" element={<Navigate to="/login" replace />} />
     </Routes>
   );
 }

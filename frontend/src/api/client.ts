@@ -29,7 +29,6 @@ function signOutIfUnauthorized(status: number, apiPath: string): void {
   const p = (apiPath.split("?")[0] ?? "").toLowerCase();
   if (p.includes("/api/v1/integrations/")) return;
   useAuthStore.getState().setAccessToken(null);
-  useAuthStore.getState().setNeedsOnboarding(true);
   if (typeof window === "undefined" || window.location.pathname.startsWith("/login")) return;
   window.location.assign("/login");
 }
@@ -64,6 +63,27 @@ export async function apiGet<T>(path: string): Promise<T> {
   return res.json() as Promise<T>;
 }
 
+/** Authenticated GET returning binary (e.g. PDF download). */
+export async function apiGetBlob(path: string): Promise<{ blob: Blob; filename: string }> {
+  const base = viteApiBase() || defaultBase;
+  const res = await fetch(`${base}${path}`, {
+    headers: {
+      ...authHeaders(),
+      Accept: "application/pdf,*/*",
+    },
+  });
+  if (!res.ok) {
+    signOutIfUnauthorized(res.status, path);
+    const text = await res.text();
+    throw new Error(text || res.statusText);
+  }
+  const blob = await res.blob();
+  const disposition = res.headers.get("Content-Disposition") ?? "";
+  const match = /filename="([^"]+)"/i.exec(disposition);
+  const filename = match?.[1] ?? "report.pdf";
+  return { blob, filename };
+}
+
 export async function apiPostJson<T, B = unknown>(path: string, body: B): Promise<T> {
   const base = viteApiBase() || defaultBase;
   const res = await fetch(`${base}${path}`, {
@@ -85,6 +105,21 @@ export async function apiPatchJson<T, B = unknown>(path: string, body: B): Promi
     method: "PATCH",
     headers: { ...authHeaders(), "Content-Type": "application/json" },
     body: JSON.stringify(body ?? {}),
+  });
+  if (!res.ok) {
+    signOutIfUnauthorized(res.status, path);
+    const text = await res.text();
+    throw new Error(text || res.statusText);
+  }
+  return res.json() as Promise<T>;
+}
+
+export async function apiPostFormData<T>(path: string, form: FormData): Promise<T> {
+  const base = viteApiBase() || defaultBase;
+  const res = await fetch(`${base}${path}`, {
+    method: "POST",
+    headers: authHeaders(),
+    body: form,
   });
   if (!res.ok) {
     signOutIfUnauthorized(res.status, path);

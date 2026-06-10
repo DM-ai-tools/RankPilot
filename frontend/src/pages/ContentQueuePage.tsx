@@ -47,10 +47,10 @@ const STATUS_TONE: Record<string, "amber" | "green" | "teal" | "red" | "blue"> =
   rejected:  "red",
 };
 
-function statusLabel(status: string) {
+function statusLabel(status: string, hasBody = true) {
   switch (status) {
-    case "pending":   return "Generating…";
-    case "approved":  return "Ready to Publish";
+    case "pending":   return hasBody ? "Awaiting approval" : "Generating…";
+    case "approved":  return "Approved";
     case "published": return "Published ✓";
     case "rejected":  return "Rejected";
     default:          return status;
@@ -293,7 +293,7 @@ export function ContentQueuePage() {
         }
       />
 
-      <div className="flex-1 overflow-y-auto bg-rp-light px-5 py-[18px]">
+      <div className="page-scroll px-5 py-7">
         {!token ? (
           <p className="text-sm text-rp-tmid">
             <Link to="/login" className="font-semibold text-[#72C219] hover:underline">Sign in</Link>{" "}
@@ -424,7 +424,7 @@ export function ContentQueuePage() {
                           </td>
                           <td className="px-4 py-2.5">
                             <Badge tone={STATUS_TONE[it.status] ?? "amber"}>
-                              {statusLabel(it.status)}
+                              {statusLabel(it.status, Boolean(it.body?.trim()))}
                             </Badge>
                           </td>
                           <td className="px-4 py-2.5 text-[12px] text-rp-tlight">

@@ -10,6 +10,7 @@ import { TopBar } from "../components/layout/TopBar";
 import { Button } from "../components/ui/Button";
 import { Card, CardHeader } from "../components/ui/Card";
 import { useAuthStore } from "../stores/authStore";
+import { scanKeywordFromPrimary } from "../lib/primaryKeywords";
 
 const AU_METROS = [
   "Melbourne, VIC",
@@ -90,7 +91,7 @@ export function NewScanPage() {
   useEffect(() => {
     if (!prof) return;
     if (prof.business_url)    setBusinessUrl(prof.business_url);
-    if (prof.primary_keyword) setKeyword(prof.primary_keyword);
+    if (prof.primary_keyword) setKeyword(scanKeywordFromPrimary(prof.primary_keyword));
     if (prof.metro_label)     setMetro(prof.metro_label);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [prof?.client_id]);           // run once per client, not on every field change
@@ -310,9 +311,9 @@ export function NewScanPage() {
               ))}
 
               <div className="rounded-lg border border-navy/10 bg-navy/[0.04] px-4 py-3 text-[12px] text-rp-tmid">
-                RankPilot calls <strong>DataForSEO Maps API</strong> for each suburb,
-                matches <strong>{domain}</strong> in results, and writes rank positions to your database.
-                Dashboard updates automatically when the scan completes.
+                <strong>Maps pack ranks</strong> use DataForSEO (Ahrefs does not expose per-suburb Google Maps
+                rankings). <strong>Keyword volumes</strong> use Ahrefs. This scan matches{" "}
+                <strong>{domain}</strong> in each suburb&apos;s Maps results and saves positions to your database.
               </div>
 
               {scan.isError && (

@@ -11,6 +11,8 @@ export type ClientProfile = {
   plan: string | null;
   primary_keyword: string;
   metro_label: string;
+  location_scope?: "city" | "suburb";
+  primary_suburb?: string;
   search_radius_km?: number;
   /** From GET /me — server geocoded for map. */
   business_lat?: number | null;
@@ -25,6 +27,8 @@ export type OnboardingRequest = {
   business_phone?: string;
   primary_keyword: string;
   metro_label: string;
+  location_scope?: "city" | "suburb";
+  primary_suburb?: string;
   search_radius_km?: number;
 };
 
@@ -34,7 +38,12 @@ export type OnboardingResponse = {
   message: string;
 };
 
+/** Full profile including map pin (may call external geocoders — slower). */
 export const fetchMe = (): Promise<ClientProfile> => apiGet<ClientProfile>("/api/v1/me");
+
+/** Fast profile for login / routing — skips geocoding. */
+export const fetchMeForAuth = (): Promise<ClientProfile> =>
+  apiGet<ClientProfile>("/api/v1/me?include_map=false");
 
 export type MePatch = { business_url: string; primary_keyword?: string };
 

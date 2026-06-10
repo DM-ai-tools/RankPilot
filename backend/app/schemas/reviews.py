@@ -38,3 +38,6 @@ class ReviewsSummaryResponse(BaseModel):
     reviews: list[ReviewItemRow] = Field(default_factory=list)
     fetched_at: str | None = None
     message: str | None = Field(None, description="Empty data / missing credentials / upstream error hint")
+    from_cache: bool = False
+    cached_at: str | None = None
+    cache_expires_at: str | None = None

@@ -1,30 +1,26 @@
-﻿import { create } from "zustand";
+import { create } from "zustand";
 import { persist, createJSONStorage } from "zustand/middleware";
 
 type AuthState = {
   accessToken: string | null;
-  /** True after login, until the user completes the onboarding wizard this session. */
-  needsOnboarding: boolean;
   setAccessToken: (token: string | null) => void;
-  setNeedsOnboarding: (v: boolean) => void;
 };
 
 /**
- * sessionStorage: token is wiped when the browser closes, forcing re-login.
- * needsOnboarding: set by LoginPage from /me (incomplete profile → onboarding).
- * Do not tie to setAccessToken — that forced every login through onboarding and blocked the dashboard.
+ * sessionStorage: token is wiped when the browser closes.
+ * Onboarding gate comes from GET /me (see RequireOnboarded), not a persisted flag.
  */
 export const useAuthStore = create<AuthState>()(
   persist(
     (set) => ({
-      accessToken:        null,
-      needsOnboarding:    true,
-      setAccessToken:     (token) => set({ accessToken: token }),
-      setNeedsOnboarding: (v) => set({ needsOnboarding: v }),
+      accessToken: null,
+      setAccessToken: (token) => set({ accessToken: token }),
     }),
     {
-      name:    "rankpilot-auth",
+      name: "rankpilot-auth",
+      version: 2,
       storage: createJSONStorage(() => sessionStorage),
+      partialize: (state) => ({ accessToken: state.accessToken }),
     },
   ),
 );

@@ -13,9 +13,12 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.core.config import get_settings
 from app.db.schema_bootstrap import (
+    ensure_rp_clients_location_scope,
     ensure_rp_clients_nap_columns,
     ensure_rp_clients_search_radius,
+    ensure_rp_gbp_brand_kit_table,
     ensure_rp_suburb_grid_client_index,
+    ensure_rp_suburb_geo_table,
 )
 from sqlalchemy import text
 from sqlalchemy.engine.url import make_url
@@ -94,6 +97,7 @@ def _cors_allow_origin_regex(settings) -> str | None:
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
+    get_settings.cache_clear()
     settings = get_settings()
     configure_engine(settings.database_url, echo=settings.debug)
     _warn_railway_localhost_db(settings.database_url)
@@ -139,6 +143,10 @@ async def lifespan(_app: FastAPI):
         except Exception:
             logger.exception("Schema bootstrap: search_radius_km (see infra/sql/009_search_radius.sql)")
         try:
+            await ensure_rp_clients_location_scope()
+        except Exception:
+            logger.exception("Schema bootstrap: location_scope (see infra/sql/018_location_scope.sql)")
+        try:
             await ensure_rp_clients_nap_columns()
         except Exception:
             logger.exception("Schema bootstrap: business NAP columns (see infra/sql/011_business_nap.sql)")
@@ -146,6 +154,11 @@ async def lifespan(_app: FastAPI):
             await ensure_rp_suburb_grid_client_index()
         except Exception:
             logger.exception("Schema bootstrap: suburb grid index (see infra/sql/010_perf_indexes.sql)")
+        try:
+            await ensure_rp_suburb_geo_table()
+            await ensure_rp_gbp_brand_kit_table()
+        except Exception:
+            logger.exception("Schema bootstrap: rp_suburb_geo (see infra/sql/015_suburb_geo.sql)")
 
     s = get_settings()
     if str(s.dataforseo_login or "").strip() and str(s.dataforseo_password or "").strip():

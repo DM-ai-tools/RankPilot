@@ -3,9 +3,11 @@
 from uuid import UUID
 
 from fastapi import APIRouter, Depends
+from fastapi.responses import Response
 from sqlalchemy import text
 
 from app.deps import CurrentClientId, DbSession
+from app.services.content_export_service import build_content_queue_xlsx, content_export_filename
 from app.schemas.content_queue import (
     ApproveAllResponse,
     ContentQueueItem,
@@ -14,6 +16,8 @@ from app.schemas.content_queue import (
 )
 from app.services.content_generation_service import generate_content_for_client
 from app.services.content_queue_service import ContentQueueService
+from app.services.content_publish_service import publish_queue_item
+from app.services.content_timeline_service import generate_monthly_timeline
 
 router = APIRouter()
 
@@ -58,6 +62,40 @@ async def generate_content(
 ) -> dict:
     """Generates landing pages + GBP description via Claude for the logged-in client."""
     return await generate_content_for_client(session, client_id)
+
+
+@router.post("/generate-timeline")
+async def generate_timeline(
+    client_id: CurrentClientId,
+    session: DbSession,
+) -> dict:
+    """4-week GBP posts + landing pages from Ahrefs suburb keywords."""
+    return await generate_monthly_timeline(session, client_id)
+
+
+@router.get("/export")
+async def export_content_plan(
+    client_id: CurrentClientId,
+    session: DbSession,
+) -> Response:
+    """Excel download of pending/approved timeline content + photo URLs (review before approval)."""
+    data = await build_content_queue_xlsx(session, client_id)
+    filename = content_export_filename()
+    return Response(
+        content=data,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@router.post("/{item_id}/publish")
+async def publish_content_item(
+    item_id: UUID,
+    client_id: CurrentClientId,
+    session: DbSession,
+) -> dict:
+    """Publish an approved item immediately (GBP or WordPress)."""
+    return await publish_queue_item(session, client_id, str(item_id))
 
 
 @router.post("/approve-all", response_model=ApproveAllResponse)

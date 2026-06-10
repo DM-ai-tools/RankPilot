@@ -32,7 +32,6 @@ export function ResultsLoadingPage() {
   const qc = useQueryClient();
   const [params] = useSearchParams();
   const token = useAuthStore((s) => s.accessToken);
-  const setNeedsOnboarding = useAuthStore((s) => s.setNeedsOnboarding);
   const jobId = params.get("job");
 
   const integrations = useQuery({
@@ -101,14 +100,13 @@ export function ResultsLoadingPage() {
         qc.fetchQuery({ queryKey: ["citations", token], queryFn: fetchCitations }),
       ]);
       if (cancelled) return;
-      setNeedsOnboarding(false);
       void navigate("/", { replace: true });
     };
     void warm();
     return () => {
       cancelled = true;
     };
-  }, [navigate, qc, readyForDashboard, setNeedsOnboarding, token]);
+  }, [navigate, qc, readyForDashboard, token]);
 
   if (!token) {
     void navigate("/login", { replace: true });
@@ -181,7 +179,6 @@ export function ResultsLoadingPage() {
             style={{ backgroundColor: "#72C219" }}
             disabled={!allowManualDashboard}
             onClick={() => {
-              setNeedsOnboarding(false);
               void navigate("/", { replace: true });
             }}
           >

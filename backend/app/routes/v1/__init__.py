@@ -9,15 +9,18 @@ from app.routes.v1 import (
     content_queue,
     dashboard,
     gbp,
+    google_ads,
     health,
     integrations,
     jobs,
+    keywords,
     me,
     opportunities,
     ranks,
     reports,
     reviews,
     scans,
+    suburbs,
 )
 
 api_router = APIRouter()
@@ -26,6 +29,7 @@ api_router.include_router(auth.router, prefix="/auth", tags=["auth"])
 api_router.include_router(me.router, tags=["account"])
 api_router.include_router(dashboard.router, prefix="/dashboard", tags=["dashboard"])
 api_router.include_router(ranks.router, prefix="/ranks", tags=["ranks"])
+api_router.include_router(suburbs.router, prefix="/suburbs", tags=["suburbs"])
 api_router.include_router(reviews.router, prefix="/reviews", tags=["reviews"])
 api_router.include_router(content_queue.router, prefix="/content-queue", tags=["content-queue"])
 api_router.include_router(opportunities.router, prefix="/opportunities", tags=["opportunities"])
@@ -36,3 +40,5 @@ api_router.include_router(chat.router, prefix="/chat", tags=["chat"])
 api_router.include_router(scans.router, prefix="/scans", tags=["scans"])
 api_router.include_router(jobs.router, prefix="/jobs", tags=["jobs"])
 api_router.include_router(integrations.router, tags=["integrations"])
+api_router.include_router(keywords.router, prefix="/keywords", tags=["keywords"])
+api_router.include_router(google_ads.router, tags=["google-ads"])

@@ -34,6 +34,9 @@ frontend/.vite/
 Thumbs.db
 desktop.ini
 
+# Uploaded GBP photos (local dev)
+backend/uploads/
+
 # Logs
 *.log
 npm-debug.log*

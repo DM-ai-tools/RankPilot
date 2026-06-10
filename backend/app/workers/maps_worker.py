@@ -1,4 +1,4 @@
-"""Maps-scan worker: picks up rp_jobs rows, calls DataForSEO, writes rp_rank_history."""
+"""Maps-scan worker: DataForSEO for Google Maps pack ranks; Ahrefs for keyword volumes."""
 
 from __future__ import annotations
 
@@ -12,19 +12,24 @@ from sqlalchemy import text
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.config import get_settings
+from app.core.config import get_ahrefs_api_key, get_settings
 from app.db.session import session_maker
 from app.data.au_suburbs import filter_suburbs_by_radius_km
+from app.lib.maps_pack_rank import infer_maps_pack_rank
+from app.services.ahrefs_cache_service import build_cache_key, build_suburbs_hash, get_ahrefs_cache, set_ahrefs_cache
 from app.services.dataforseo_service import DataForSEOClient, format_maps_location_name
+from app.services.keyword_lookup_service import _country_for_metro
+from app.services.ranks_service import _ahrefs_volume_by_suburb
 
 logger = logging.getLogger(__name__)
 
-_BATCH = 5  # max parallel suburb tasks per scan job
+_BATCH = 10  # max parallel suburb tasks per scan job
 
 
 def _serialize_maps_pack(items: list[dict], suburb: str, limit: int = 24) -> list[dict]:
     """Keep Maps SERP rows that include Google lat/lng (DataForSEO advanced Maps items)."""
     out: list[dict] = []
+    pack_order = 0
     for it in items[:limit]:
         if not isinstance(it, dict):
             continue
@@ -36,29 +41,18 @@ def _serialize_maps_pack(items: list[dict], suburb: str, limit: int = 24) -> lis
             la = lo = None
         if la is None or lo is None:
             continue
-        rg = it.get("rank_group")
-        if rg is None:
-            rg = it.get("rank_absolute")
-        try:
-            rnk = int(rg) if rg is not None else None
-        except (TypeError, ValueError):
-            rnk = None
+        pack_order += 1
+        rnk = infer_maps_pack_rank(it, pack_order)
         title = str(it.get("title") or "").strip() or "Business"
         dom = str(it.get("domain") or "").strip()[:160]
         url = str(it.get("url") or it.get("contact_url") or it.get("original_url") or "").strip()[:400]
         addr = str(it.get("address") or "").strip()[:240]
         # Persist review count + rating so competitor velocity can be derived without
         # extra API calls later.
-        rc_raw = it.get("reviews_count") or it.get("rating", {})
-        try:
-            reviews_count = int(it.get("reviews_count")) if it.get("reviews_count") is not None else None
-        except (TypeError, ValueError):
-            reviews_count = None
-        rating_raw = it.get("rating")
-        try:
-            rating_val = float(rating_raw.get("value")) if isinstance(rating_raw, dict) else (float(rating_raw) if rating_raw is not None else None)
-        except (TypeError, ValueError, AttributeError):
-            rating_val = None
+        from app.lib.maps_pack_rank import maps_pack_rating_value, maps_pack_reviews_count
+
+        reviews_count = maps_pack_reviews_count(it)
+        rating_val = maps_pack_rating_value(it)
         out.append(
             {
                 "title": title,
@@ -74,6 +68,46 @@ def _serialize_maps_pack(items: list[dict], suburb: str, limit: int = 24) -> lis
             }
         )
     return out
+
+
+async def _load_ahrefs_volumes_for_scan(
+    session: AsyncSession,
+    *,
+    client_id: str,
+    keyword: str,
+    suburb_names: list[str],
+    metro: str,
+) -> tuple[dict[str, int], str]:
+    """Use 24h Ahrefs cache when available so scans skip a slow volume batch."""
+    if not get_ahrefs_api_key() or not keyword or not suburb_names:
+        return {}, "none"
+
+    country = _country_for_metro(metro)
+    vol_cache_key = build_cache_key(
+        "ranks_volume",
+        country,
+        client_id,
+        keyword,
+        build_suburbs_hash(suburb_names),
+    )
+    cached_vols, _, _ = await get_ahrefs_cache(session, vol_cache_key)
+    if isinstance(cached_vols, dict) and cached_vols.get("volumes"):
+        volumes = {str(k): int(v) for k, v in cached_vols["volumes"].items()}
+        return volumes, "ahrefs_cache"
+
+    try:
+        volumes = await _ahrefs_volume_by_suburb(keyword, suburb_names, metro=metro)
+        await set_ahrefs_cache(
+            session,
+            vol_cache_key,
+            {"volumes": volumes},
+            client_id=UUID(client_id),
+        )
+        await session.commit()
+        return volumes, "ahrefs"
+    except Exception as exc:
+        logger.warning("Ahrefs volume batch for maps_scan failed: %s", exc)
+        return {}, "none"
 
 
 async def _run_maps_scan(job_id: str, client_id: str, payload: dict) -> None:
@@ -164,20 +198,39 @@ async def _run_maps_scan_core(job_id: str, client_id: str, payload: dict, client
             business_url,
         )
 
-    # ---------- state-wise keyword volume (previous month) ----------
-    state_volume: dict[str, int | None] = {}
-    for s in {str(x["state"] or "").upper() for x in suburbs}:
-        if not s:
-            continue
-        try:
-            vol = await client.get_state_keyword_volume(keyword=keyword, state_abbr=s)
-        except Exception as exc:
-            logger.warning("Search volume fetch failed for %s: %s", s, exc)
-            vol = None
-        state_volume[s] = vol
+    # ---------- Ahrefs keyword volumes (cached when possible) ----------
+    ahrefs_volumes: dict[str, int] = {}
+    volume_source = "none"
+    suburb_names = [str(s["suburb"]) for s in suburbs]
+    async with maker() as session:
+        await session.execute(text("SET LOCAL row_security = off"))
+        ahrefs_volumes, volume_source = await _load_ahrefs_volumes_for_scan(
+            session,
+            client_id=client_id,
+            keyword=keyword,
+            suburb_names=suburb_names,
+            metro=metro,
+        )
+    if volume_source == "ahrefs_cache":
+        logger.info(
+            "maps_scan job %s: Ahrefs volumes loaded from cache for %d suburbs",
+            job_id,
+            len(ahrefs_volumes),
+        )
+    elif volume_source == "ahrefs":
+        logger.info(
+            "maps_scan job %s: Ahrefs volumes fetched for %d suburbs",
+            job_id,
+            len(ahrefs_volumes),
+        )
+    elif not get_ahrefs_api_key():
+        logger.info("maps_scan job %s: AHREFS_API_KEY not set — suburb volumes skipped", job_id)
 
     # ---------- parallel rank checks (batch of _BATCH at a time) ----------
     results: list[tuple[str, str, str, str, int | None, int | None, list[dict]]] = []
+    checked_at = datetime.now(UTC)
+    progress_lock = asyncio.Lock()
+    progress = {"checked": 0, "total": len(suburbs), "found": 0, "inserted": 0}
 
     async def _check(
         suburb_id: str,
@@ -191,20 +244,10 @@ async def _run_maps_scan_core(job_id: str, client_id: str, payload: dict, client
         lng_f = float(lng) if lng is not None else None
         location = format_maps_location_name(suburb, state)
         try:
-            candidates: list[str] = [
-                keyword,
-                f"{keyword} {suburb}",
-                f"{keyword} {suburb} {state}",
-                f"{keyword} near {suburb}",
-            ]
-            words = [w for w in str(keyword or "").split() if w]
-            if len(words) >= 3:
-                candidates.append(" ".join(words[:3]))
-            if len(words) >= 2:
-                candidates.append(" ".join(words[:2]))
-            # Deduplicate while preserving order.
+            # Local query first; bare keyword only if suburb-specific search misses.
+            candidates = [f"{keyword} {suburb}".strip(), keyword.strip()]
             seen: set[str] = set()
-            uniq = [q for q in candidates if not (q in seen or seen.add(q))]
+            uniq = [q for q in candidates if q and not (q.lower() in seen or seen.add(q.lower()))]
             rank = None
             serp_items: list[dict] = []
             for q in uniq:
@@ -216,15 +259,47 @@ async def _run_maps_scan_core(job_id: str, client_id: str, payload: dict, client
                     lat=lat_f,
                     lng=lng_f,
                 )
-                if rank is not None:
+                if rank is not None or serp_items:
                     break
         except Exception as exc:
             logger.warning("Rank check failed for %s: %s", suburb, exc)
             rank = None
             serp_items = []
-        vol = state_volume.get(str(state or "").upper())
+        vol = ahrefs_volumes.get(suburb) if volume_source == "ahrefs" else None
         pack = _serialize_maps_pack(serp_items, suburb)
+        inserted = await _persist_suburb_rank(
+            client_id,
+            suburb_id,
+            suburb,
+            str(state or "").upper(),
+            postcode,
+            keyword,
+            rank,
+            vol,
+            pack,
+            checked_at,
+            volume_source=volume_source,
+        )
         results.append((suburb_id, suburb, str(state or "").upper(), postcode, rank, vol, pack))
+        async with progress_lock:
+            progress["checked"] += 1
+            if rank is not None:
+                progress["found"] += 1
+            if inserted:
+                progress["inserted"] += 1
+            if progress["checked"] % 1 == 0 or progress["checked"] == progress["total"]:
+                await _update_job_progress(
+                    job_id,
+                    result={
+                        "progress": {
+                            "suburbs_checked": progress["checked"],
+                            "suburbs_total": progress["total"],
+                            "found": progress["found"],
+                            "rows_inserted": progress["inserted"],
+                            "keyword": keyword,
+                        }
+                    },
+                )
         logger.info("  %s → rank %s", suburb, rank)
 
     tasks = [
@@ -242,75 +317,12 @@ async def _run_maps_scan_core(job_id: str, client_id: str, payload: dict, client
         batch = tasks[i : i + _BATCH]
         await asyncio.gather(*batch)
 
-    # ---------- write rank history ----------
-    now = datetime.now(UTC)
-    from uuid6 import uuid7  # noqa: PLC0415
-
-    async with maker() as session:
-        await session.execute(text("SET LOCAL row_security = off"))
-        import json  # noqa: PLC0415
-
-        inserted = 0
-        skipped_stale = 0
-        for suburb_id, suburb, state, postcode, rank, vol, pack in results:
-            # Onboarding can reseed suburb grid while a scan is running, which changes suburb IDs.
-            # Resolve the current suburb ID by natural key to avoid FK failures and keep the job alive.
-            live_sid = (
-                await session.execute(
-                    text(
-                        """
-                        SELECT id
-                        FROM rp_suburb_grid
-                        WHERE client_id = :cid
-                          AND suburb = :suburb
-                          AND state = :state
-                          AND postcode = :postcode
-                        LIMIT 1
-                        """
-                    ),
-                    {
-                        "cid": client_id,
-                        "suburb": suburb,
-                        "state": state,
-                        "postcode": postcode,
-                    },
-                )
-            ).scalar_one_or_none()
-            if live_sid is None:
-                skipped_stale += 1
-                continue
-
-            await session.execute(
-                text(
-                    """
-                    INSERT INTO rp_rank_history
-                        (id, client_id, suburb_id, keyword, rank_position, feature_snapshot, checked_at)
-                    VALUES
-                        (:id, :cid, :sid, :kw, :rank, (CAST(:snap AS text))::jsonb, :ts)
-                    """
-                ),
-                {
-                    "id": str(uuid7()),
-                    "cid": client_id,
-                    "sid": str(live_sid),
-                    "kw": keyword,
-                    "rank": rank,
-                    "snap": json.dumps(
-                        {
-                            "state": state,
-                            "monthly_search_volume": vol,
-                            "volume_source": "dataforseo_keywords_data_google_ads",
-                            "maps_pack": pack,
-                        }
-                    ),
-                    "ts": now,
-                },
-            )
-            inserted += 1
-        await session.commit()
+    await _reorder_suburb_priorities_by_volume(client_id, keyword)
 
     total = len(results)
-    found = sum(1 for _, _, _, _, r, _, _ in results if r is not None)
+    found = progress["found"]
+    inserted = progress["inserted"]
+    skipped_stale = total - inserted
     await _update_job(
         job_id,
         "succeeded",
@@ -320,12 +332,177 @@ async def _run_maps_scan_core(job_id: str, client_id: str, payload: dict, client
             "rows_skipped_stale": skipped_stale,
             "found": found,
             "keyword": keyword,
+            "progress": {
+                "suburbs_checked": total,
+                "suburbs_total": total,
+                "found": found,
+                "rows_inserted": inserted,
+                "keyword": keyword,
+            },
         },
     )
     logger.info(
         "maps_scan %s done: %d/%d suburbs ranked, inserted=%d, skipped_stale=%d",
         job_id, found, total, inserted, skipped_stale,
     )
+
+
+async def _update_job_progress(
+    job_id: str,
+    *,
+    status: str | None = None,
+    result: dict | None = None,
+    error: str | None = None,
+) -> None:
+    import json  # noqa: PLC0415
+
+    maker = session_maker()
+    async with maker() as session:
+        await session.execute(text("SET LOCAL row_security = off"))
+        if status:
+            await session.execute(
+                text(
+                    """
+                    UPDATE rp_jobs
+                    SET status = :status,
+                        result = COALESCE((CAST(:res AS text))::jsonb, result),
+                        error_message = COALESCE(:err, error_message),
+                        updated_at = now()
+                    WHERE id = :id
+                    """
+                ),
+                {
+                    "id": job_id,
+                    "status": status,
+                    "res": json.dumps(result) if result else None,
+                    "err": error,
+                },
+            )
+        else:
+            await session.execute(
+                text(
+                    """
+                    UPDATE rp_jobs
+                    SET result = COALESCE(result, '{}'::jsonb) || (CAST(:res AS text))::jsonb,
+                        updated_at = now()
+                    WHERE id = :id
+                    """
+                ),
+                {"id": job_id, "res": json.dumps(result or {})},
+            )
+        await session.commit()
+
+
+async def _persist_suburb_rank(
+    client_id: str,
+    suburb_id: str,
+    suburb: str,
+    state: str,
+    postcode: str,
+    keyword: str,
+    rank: int | None,
+    vol: int | None,
+    pack: list[dict],
+    checked_at: datetime,
+    *,
+    volume_source: str = "none",
+) -> bool:
+    """Insert one rank_history row; return False if suburb row was stale."""
+    import json  # noqa: PLC0415
+    from uuid6 import uuid7  # noqa: PLC0415
+
+    maker = session_maker()
+    async with maker() as session:
+        await session.execute(text("SET LOCAL row_security = off"))
+        live_sid = (
+            await session.execute(
+                text(
+                    """
+                    SELECT id
+                    FROM rp_suburb_grid
+                    WHERE client_id = :cid
+                      AND suburb = :suburb
+                      AND state = :state
+                      AND postcode = :postcode
+                    LIMIT 1
+                    """
+                ),
+                {"cid": client_id, "suburb": suburb, "state": state, "postcode": postcode},
+            )
+        ).scalar_one_or_none()
+        if live_sid is None:
+            return False
+
+        await session.execute(
+            text(
+                """
+                INSERT INTO rp_rank_history
+                    (id, client_id, suburb_id, keyword, rank_position, feature_snapshot, checked_at)
+                VALUES
+                    (:id, :cid, :sid, :kw, :rank, (CAST(:snap AS text))::jsonb, :ts)
+                """
+            ),
+            {
+                "id": str(uuid7()),
+                "cid": client_id,
+                "sid": str(live_sid),
+                "kw": keyword,
+                "rank": rank,
+                "snap": json.dumps(
+                    {
+                        "state": state,
+                        "monthly_search_volume": vol,
+                        "volume_source": volume_source,
+                        "maps_pack": pack,
+                    }
+                ),
+                "ts": checked_at,
+            },
+        )
+        await session.commit()
+        return True
+
+
+async def _reorder_suburb_priorities_by_volume(client_id: str, keyword: str) -> None:
+    """Set rank_priority on rp_suburb_grid by latest keyword search volume (highest first)."""
+    maker = session_maker()
+    async with maker() as session:
+        await session.execute(text("SET LOCAL row_security = off"))
+        rows = (
+            await session.execute(
+                text(
+                    """
+                    SELECT DISTINCT ON (s.id)
+                      s.id,
+                      COALESCE(
+                        NULLIF((r.feature_snapshot->>'monthly_search_volume')::int, 0),
+                        GREATEST(1, COALESCE(s.population, 0) * 14 / 1000)
+                      ) AS vol
+                    FROM rp_suburb_grid s
+                    LEFT JOIN rp_rank_history r
+                      ON r.suburb_id = s.id
+                     AND r.client_id = s.client_id
+                     AND LOWER(TRIM(r.keyword)) = LOWER(TRIM(:kw))
+                    WHERE s.client_id = :cid
+                    ORDER BY s.id, r.checked_at DESC NULLS LAST
+                    """
+                ),
+                {"cid": client_id, "kw": keyword},
+            )
+        ).mappings().all()
+        ordered = sorted(rows, key=lambda r: int(r.get("vol") or 0), reverse=True)
+        for pri, row in enumerate(ordered, start=1):
+            await session.execute(
+                text(
+                    """
+                    UPDATE rp_suburb_grid
+                    SET rank_priority = :pri, updated_at = now()
+                    WHERE id = :id AND client_id = :cid
+                    """
+                ),
+                {"pri": pri, "id": str(row["id"]), "cid": client_id},
+            )
+        await session.commit()
 
 
 async def _update_job(

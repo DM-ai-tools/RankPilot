@@ -193,7 +193,7 @@ export function CitationsPage() {
           </Button>
         }
       />
-      <div className="flex-1 overflow-y-auto bg-rp-light px-7 py-6">
+      <div className="page-scroll">
 
         {/* Status messages */}
         {syncMut.isPending && (
