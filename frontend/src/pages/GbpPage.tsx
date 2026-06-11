@@ -1250,16 +1250,18 @@ function DescriptionTab({
 
   const viewingItem =
     (viewingId ? history.find((h) => h.id === viewingId) : null) ?? draft;
-  const isActiveDraft = Boolean(
-    draft &&
-      viewingId === draft.id &&
-      !["published", "archived", "rejected"].includes(draft.status),
+  const isHistoryReadOnly = Boolean(
+    viewingId &&
+      viewingItem &&
+      ["published", "archived", "rejected"].includes(viewingItem.status) &&
+      (!draft || viewingId !== draft.id),
   );
+  const canEdit = !isHistoryReadOnly;
 
   const charCount = editBody.trim().length;
   const overLimit = charCount > 750;
   const remaining = 750 - charCount;
-  const canAct = isActiveDraft;
+  const canAct = canEdit;
 
   const audit = asArray<KeywordAuditItem>(
     d.keyword_audit_draft ?? d.keyword_audit_primary ?? d.keyword_audit,
@@ -1355,7 +1357,7 @@ function DescriptionTab({
 
             {/* Description editor */}
             <div className="space-y-2">
-              {!isActiveDraft && viewingItem && (
+              {isHistoryReadOnly && viewingItem && (
                 <p className="rounded-md border border-rp-border bg-rp-light px-3 py-2 text-[11px] text-rp-tlight">
                   Viewing {viewingItem.status.replace(/_/g, " ")} version from{" "}
                   {formatGbpHistoryDate(
@@ -1377,17 +1379,24 @@ function DescriptionTab({
                       Back to current draft
                     </button>
                   )}
+                  <button
+                    type="button"
+                    className="ml-2 font-semibold text-[#1A73E8] hover:underline"
+                    onClick={() => setViewingId(null)}
+                  >
+                    Edit this version
+                  </button>
                 </p>
               )}
               <div className="relative">
                 <textarea
                   rows={14}
                   value={editBody}
-                  readOnly={!isActiveDraft}
+                  readOnly={!canEdit}
                   onChange={(e) => setEditBody(e.target.value)}
                   placeholder="Type or paste your GBP description here, or generate with AI using the selected keywords…"
                   className={`w-full resize-y rounded-md border p-2.5 text-[12px] leading-relaxed text-navy placeholder:text-rp-tlight focus:outline-none focus:ring-1 ${
-                    !isActiveDraft ? "cursor-default bg-[#F8FAFC]" : ""
+                    !canEdit ? "cursor-default bg-[#F8FAFC]" : "bg-white"
                   } ${
                     overLimit
                       ? "border-red-400 focus:ring-red-400"
