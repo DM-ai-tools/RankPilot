@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from uuid import UUID
 
 from fastapi import HTTPException
@@ -89,6 +90,40 @@ def _metrics_from_row(keyword: str, row: dict, *, country: str) -> KeywordOvervi
     )
 
 
+# Filler words ignored when checking whether a related keyword is on-topic.
+_RELEVANCE_STOPWORDS = {
+    "a", "an", "and", "at", "best", "by", "for", "from", "how", "in", "is",
+    "me", "my", "near", "of", "on", "or", "the", "to", "top", "what", "where",
+    "which", "who", "why", "with", "your",
+}
+
+
+def _seed_terms(keyword: str) -> set[str]:
+    return {
+        t
+        for t in re.split(r"[^a-z0-9]+", keyword.lower())
+        if len(t) >= 3 and t not in _RELEVANCE_STOPWORDS
+    }
+
+
+def _is_relevant(candidate: str, seed_terms: set[str]) -> bool:
+    """True if the candidate keyword shares at least one meaningful term (stem match)."""
+    if not seed_terms:
+        return True
+    tokens = {t for t in re.split(r"[^a-z0-9]+", candidate.lower()) if len(t) >= 3}
+    for tok in tokens:
+        for seed in seed_terms:
+            # Prefix stem match: "agency"~"agencies", "consultant"~"consultants".
+            if tok.startswith(seed[:4]) and seed.startswith(tok[:4]):
+                return True
+    return False
+
+
+def _filter_relevant(rows: list[dict], seed_terms: set[str]) -> list[dict]:
+    """Drop Ahrefs filler (chatgpt, youtube, …) returned for low-data seed keywords."""
+    return [r for r in rows if _is_relevant(str(r.get("keyword") or ""), seed_terms)]
+
+
 def _kd_description(kd: int | None) -> str:
     if kd is None:
         return "Difficulty data not available for this keyword."
@@ -128,7 +163,8 @@ async def fetch_keyword_overview(
     ).mappings().first()
     metro = str((profile or {}).get("metro_label") or "")
     cc = (country or _country_for_metro(metro) or "au").strip().lower()[:2]
-    cache_key = build_cache_key("overview", cc, keyword)
+    # v2: bypasses pre-relevance-filter cached responses
+    cache_key = build_cache_key("overview-v2", cc, keyword)
 
     if not force_refresh:
         cached, fetched_at, expires_at = await get_ahrefs_cache(session, cache_key)
@@ -151,8 +187,13 @@ async def fetch_keyword_overview(
         also_talk_about = await client.related_terms(
             keyword, country=cc, limit=15, terms="also_talk_about"
         )
+        seed_terms = _seed_terms(keyword)
+        also_rank_for = _filter_relevant(also_rank_for, seed_terms)
+        also_talk_about = _filter_relevant(also_talk_about, seed_terms)
         if not also_rank_for:
-            also_rank_for = await client.search_suggestions(keyword, country=cc, limit=12)
+            also_rank_for = _filter_relevant(
+                await client.search_suggestions(keyword, country=cc, limit=12), seed_terms
+            )
     finally:
         await client.aclose()
 

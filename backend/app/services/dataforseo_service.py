@@ -770,6 +770,78 @@ class DataForSEOClient:
             return infer_maps_pack_rank(item, pack_order)
         return None
 
+    async def google_business_updates_fetch_block(
+        self,
+        *,
+        keyword: str,
+        location_name: str,
+        language_name: str = "English",
+        depth: int = 20,
+    ) -> dict | None:
+        """POST Business Data Google Updates (GBP posts), poll, return ``result[0]`` or None."""
+        kw = (keyword or "").strip()[:700]
+        loc = (location_name or "").strip()
+        if not kw or not loc:
+            return None
+        task: dict[str, object] = {
+            "keyword": kw,
+            "location_name": loc,
+            "language_name": language_name,
+            "depth": min(100, max(10, int(depth))),
+        }
+        c = self._http()
+        r = await c.post(f"{_BASE}/business_data/google/my_business_updates/task_post", json=[task])
+        r.raise_for_status()
+        data = r.json()
+        tasks = (data.get("tasks") or [{}])[0]
+        if tasks.get("status_code") != 20100:
+            logger.warning(
+                "DataForSEO business updates task_post status %s: %s",
+                tasks.get("status_code"),
+                tasks.get("status_message"),
+            )
+            return None
+        tid = tasks.get("id")
+        if not tid:
+            return None
+        task_id = str(tid)
+
+        url = f"{_BASE}/business_data/google/my_business_updates/task_get/{task_id}"
+        for attempt in range(_MAX_REVIEWS_POLLS):
+            payload = None
+            for http_try in range(_TASK_GET_HTTP_RETRIES):
+                try:
+                    resp = await c.get(url)
+                    if resp.status_code in (500, 502, 503, 504, 429):
+                        await asyncio.sleep(min(32, 2**http_try))
+                        continue
+                    resp.raise_for_status()
+                    payload = resp.json()
+                    break
+                except httpx.RequestError:
+                    await asyncio.sleep(min(32, 2**http_try))
+            if payload is None:
+                await asyncio.sleep(self._poll_sleep_s(attempt))
+                continue
+            tsk = (payload.get("tasks") or [{}])[0]
+            code = tsk.get("status_code")
+            if code == 20000:
+                res = tsk.get("result")
+                if isinstance(res, list) and res and isinstance(res[0], dict):
+                    return res[0]
+                return None
+            if code in (40601, 40602, 40600):
+                await asyncio.sleep(self._poll_sleep_s(attempt))
+                continue
+            logger.warning(
+                "DataForSEO business updates task_get status %s: %s",
+                code,
+                tsk.get("status_message"),
+            )
+            return None
+        logger.warning("DataForSEO business updates timed out (task=%s)", task_id[:16])
+        return None
+
     async def _fetch_google_reviews_task_get_json(self, client: httpx.AsyncClient, task_id: str) -> dict | None:
         url = f"{_BASE}/business_data/google/reviews/task_get/{task_id}"
         for http_try in range(_TASK_GET_HTTP_RETRIES):

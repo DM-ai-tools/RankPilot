@@ -1,9 +1,15 @@
 import { useQuery } from "@tanstack/react-query";
-import { HelpCircle, Search } from "lucide-react";
-import { useEffect, useState } from "react";
+import { Check, HelpCircle, Plus, Search, X } from "lucide-react";
+import { useEffect } from "react";
 
 import { formatApiError } from "../../api/client";
-import { fetchKeywordOverview, type KeywordIdeaItem, type KeywordOverviewResponse } from "../../api/keywords";
+import { fetchKeywordOverview, formatKeywordVolume, type KeywordIdeaItem, type KeywordOverviewResponse } from "../../api/keywords";
+import {
+  addResearchedKeyword,
+  removeResearchedKeyword,
+  useResearchedKeywords,
+} from "../../lib/researchedKeywords";
+import { useSessionState } from "../../lib/useSessionState";
 import { Button } from "../ui/Button";
 import { Card } from "../ui/Card";
 import { KeywordDataSourceBadge } from "./KeywordDataSourceBadge";
@@ -101,10 +107,12 @@ function IdeaColumn({
   title,
   items,
   emptyHint,
+  savedKeywords,
 }: {
   title: string;
   items: KeywordIdeaItem[];
   emptyHint: string;
+  savedKeywords: Set<string>;
 }) {
   return (
     <div className="min-h-[200px] rounded-xl border border-rp-border bg-white">
@@ -114,15 +122,38 @@ function IdeaColumn({
           <p className="px-2 py-6 text-center text-[11px] text-rp-tlight">{emptyHint}</p>
         ) : (
           <ul className="space-y-0.5">
-            {items.map((it) => (
-              <li
-                key={it.keyword}
-                className="flex items-center justify-between gap-2 rounded-md px-2 py-1.5 hover:bg-rp-light"
-              >
-                <span className="truncate text-[11px] font-medium text-navy">{it.keyword}</span>
-                <span className="shrink-0 text-[11px] font-semibold text-rp-tmid">{it.volume_display}</span>
-              </li>
-            ))}
+            {items.map((it) => {
+              const saved = savedKeywords.has(it.keyword.toLowerCase());
+              return (
+                <li
+                  key={it.keyword}
+                  className="flex items-center justify-between gap-2 rounded-md px-2 py-1.5 hover:bg-rp-light"
+                >
+                  <button
+                    type="button"
+                    title={
+                      saved
+                        ? "Saved — remove from Posts & Description keyword pickers"
+                        : "Save to Posts & Description keyword pickers"
+                    }
+                    onClick={() =>
+                      saved
+                        ? removeResearchedKeyword(it.keyword)
+                        : addResearchedKeyword(it.keyword, it.volume)
+                    }
+                    className={`flex h-4 w-4 shrink-0 items-center justify-center rounded border transition ${
+                      saved
+                        ? "border-[#34A853] bg-[#34A853] text-white"
+                        : "border-rp-border bg-white text-rp-tlight hover:border-[#34A853] hover:text-[#34A853]"
+                    }`}
+                  >
+                    {saved ? <Check className="h-3 w-3" /> : <Plus className="h-3 w-3" />}
+                  </button>
+                  <span className="min-w-0 flex-1 truncate text-[11px] font-medium text-navy">{it.keyword}</span>
+                  <span className="shrink-0 text-[11px] font-semibold text-rp-tmid">{it.volume_display}</span>
+                </li>
+              );
+            })}
           </ul>
         )}
       </div>
@@ -135,21 +166,25 @@ type Props = {
 };
 
 export function AhrefsKeywordOverview({ defaultKeyword = "" }: Props) {
-  const [input, setInput] = useState(defaultKeyword);
-  const [activeKeyword, setActiveKeyword] = useState("");
-  const [country, setCountry] = useState("au");
+  const [input, setInput] = useSessionState("rp.kwResearch.input", defaultKeyword);
+  const [activeKeyword, setActiveKeyword] = useSessionState("rp.kwResearch.active", "");
+  const [country, setCountry] = useSessionState("rp.kwResearch.country", "au");
+  const researched = useResearchedKeywords();
+  const savedKeywords = new Set(researched.map((r) => r.keyword.toLowerCase()));
 
   useEffect(() => {
-    if (defaultKeyword && !activeKeyword) {
+    if (defaultKeyword && !activeKeyword && !input) {
       setInput(defaultKeyword);
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [defaultKeyword, activeKeyword]);
 
   const overviewQ = useQuery({
     queryKey: ["keywords", "overview", activeKeyword, country],
     queryFn: () => fetchKeywordOverview(activeKeyword, country),
     enabled: Boolean(activeKeyword.trim()),
-    staleTime: 120_000,
+    staleTime: 30 * 60_000,
+    gcTime: 60 * 60_000,
     retry: 1,
   });
 
@@ -157,6 +192,14 @@ export function AhrefsKeywordOverview({ defaultKeyword = "" }: Props) {
   const loading = overviewQ.isFetching;
   const err = overviewQ.error;
   const m = data?.metrics;
+
+  // Every analyzed keyword automatically becomes available in the
+  // Posts & Content and Description keyword pickers.
+  useEffect(() => {
+    if (data?.keyword && data.metrics) {
+      addResearchedKeyword(data.keyword, data.metrics.volume);
+    }
+  }, [data?.keyword, data?.metrics]);
 
   function handleSearch(e: React.FormEvent) {
     e.preventDefault();
@@ -203,6 +246,38 @@ export function AhrefsKeywordOverview({ defaultKeyword = "" }: Props) {
           {data?.source ? <KeywordDataSourceBadge source={data.source} /> : null}
         </form>
       </Card>
+
+      {researched.length > 0 ? (
+        <Card className="p-4">
+          <div className="mb-2 flex items-center justify-between gap-2">
+            <span className="text-[11px] font-bold uppercase tracking-wide text-rp-tlight">
+              Saved research keywords ({researched.length})
+            </span>
+            <span className="text-[10px] text-rp-tlight">
+              Available in the Posts &amp; Content and Description keyword pickers
+            </span>
+          </div>
+          <div className="flex flex-wrap gap-1.5">
+            {researched.map((r) => (
+              <span
+                key={r.keyword}
+                className="inline-flex items-center gap-1 rounded-full border border-[#CEEAD6] bg-[#F6FFF8] px-2 py-0.5 text-[11px] font-medium text-[#137333]"
+              >
+                {r.keyword}
+                <span className="text-[9px] text-rp-tlight">{formatKeywordVolume(r.volume ?? 0)}</span>
+                <button
+                  type="button"
+                  title={`Remove "${r.keyword}"`}
+                  onClick={() => removeResearchedKeyword(r.keyword)}
+                  className="text-rp-tlight transition hover:text-red-600"
+                >
+                  <X className="h-3 w-3" />
+                </button>
+              </span>
+            ))}
+          </div>
+        </Card>
+      ) : null}
 
       {err ? (
         <p className="text-sm text-red-600">{formatApiError(err)}</p>
@@ -279,19 +354,36 @@ export function AhrefsKeywordOverview({ defaultKeyword = "" }: Props) {
           </div>
 
           <div>
-            <h3 className="mb-3 text-[14px] font-bold text-navy">Keyword ideas</h3>
+            <div className="mb-3 flex flex-wrap items-baseline gap-2">
+              <h3 className="text-[14px] font-bold text-navy">Keyword ideas</h3>
+              <span className="text-[10px] text-rp-tlight">
+                Click + to add a keyword to your Posts &amp; Content and Description pickers
+              </span>
+            </div>
             <div className="grid gap-3 lg:grid-cols-2 xl:grid-cols-4">
-              <IdeaColumn title="Terms match" items={data.terms_match} emptyHint="No matching terms found." />
-              <IdeaColumn title="Questions" items={data.questions} emptyHint="No question keywords found." />
+              <IdeaColumn
+                title="Terms match"
+                items={data.terms_match}
+                emptyHint="No matching terms found."
+                savedKeywords={savedKeywords}
+              />
+              <IdeaColumn
+                title="Questions"
+                items={data.questions}
+                emptyHint="No question keywords found."
+                savedKeywords={savedKeywords}
+              />
               <IdeaColumn
                 title="Also rank for"
                 items={data.also_rank_for}
                 emptyHint="No related ranking keywords found."
+                savedKeywords={savedKeywords}
               />
               <IdeaColumn
                 title="Also talk about"
                 items={data.also_talk_about}
                 emptyHint="No co-mentioned topics found."
+                savedKeywords={savedKeywords}
               />
             </div>
           </div>

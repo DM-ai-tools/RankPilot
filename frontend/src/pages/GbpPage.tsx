@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
+  Globe,
   Image,
   KeyRound,
   Megaphone,
@@ -18,6 +19,7 @@ import { Link } from "react-router-dom";
 
 import { formatApiError } from "../api/client";
 import { fetchSuburbKeywordResearch, formatKeywordVolume, pickTopAhrefsKeywords } from "../api/keywords";
+import { mergeResearchedIntoIdeas, useResearchedKeywords } from "../lib/researchedKeywords";
 import { fetchMeForAuth } from "../api/onboarding";
 import {
   deleteGbpPhoto,
@@ -46,6 +48,8 @@ import {
   type KeywordAuditItem,
 } from "../api/gbp";
 import { AhrefsKeywordOverview } from "../components/keywords/AhrefsKeywordOverview";
+import { CompetitorKeywordsOverview } from "../components/keywords/CompetitorKeywordsOverview";
+import { KeywordCompetitorsPanel } from "../components/keywords/KeywordCompetitorsPanel";
 import { TopBar } from "../components/layout/TopBar";
 import { Badge } from "../components/ui/Badge";
 import { Button } from "../components/ui/Button";
@@ -57,6 +61,7 @@ const TABS = [
   { id: "posts", label: "Posts & Content", icon: Megaphone },
   { id: "description", label: "Description & Keywords", icon: KeyRound },
   { id: "keywords", label: "Keyword Research", icon: Search },
+  { id: "ahrefs", label: "Ahrefs Overview", icon: Globe },
   { id: "photos", label: "Photos", icon: Image },
   { id: "brandkit", label: "Brand Kit", icon: Palette },
   { id: "services", label: "Services & Categories", icon: Wrench },
@@ -307,9 +312,10 @@ function PostsTab({
     queryFn: () => fetchSuburbKeywordResearch(),
     staleTime: 120_000,
   });
+  const researchedKws = useResearchedKeywords();
   const ahrefsKeywords = useMemo(
-    () => pickTopAhrefsKeywords(ahrefsQ.data, 30),
-    [ahrefsQ.data],
+    () => mergeResearchedIntoIdeas(researchedKws, pickTopAhrefsKeywords(ahrefsQ.data, 30)),
+    [ahrefsQ.data, researchedKws],
   );
 
   const refreshKeywords = useMutation({
@@ -745,6 +751,12 @@ function PostsTab({
               </div>
             ) : (
               <p className="text-sm text-rp-tlight">No draft post yet. Click "+ Generate" to create with AI.</p>
+            )}
+
+            {draft?.target_keyword && (
+              <div className="mt-3">
+                <KeywordCompetitorsPanel keyword={draft.target_keyword} />
+              </div>
             )}
 
             {canAct && draft && (
@@ -1237,9 +1249,10 @@ function DescriptionTab({
     queryFn: () => fetchSuburbKeywordResearch(),
     staleTime: 120_000,
   });
+  const researchedKws = useResearchedKeywords();
   const ahrefsKws = useMemo(
-    () => pickTopAhrefsKeywords(ahrefsQ.data, 30),
-    [ahrefsQ.data],
+    () => mergeResearchedIntoIdeas(researchedKws, pickTopAhrefsKeywords(ahrefsQ.data, 30)),
+    [ahrefsQ.data, researchedKws],
   );
 
   useEffect(() => {
@@ -1503,6 +1516,12 @@ function DescriptionTab({
                   </Button>
                 </div>
               )}
+
+              {(() => {
+                const used = asArray<string>(viewingItem?.keywords_used);
+                const kws = (used.length > 0 ? used : selectedKws).slice(0, 2);
+                return kws.map((kw) => <KeywordCompetitorsPanel key={kw} keyword={kw} />);
+              })()}
             </div>
           </div>
         </div>
@@ -2322,6 +2341,11 @@ export function GbpPage() {
             {tab === "keywords" && (
               <TabErrorBoundary label="Keyword Research">
                 <AhrefsKeywordOverview defaultKeyword={d.primary_keyword?.split(",")[0]?.trim() ?? ""} />
+              </TabErrorBoundary>
+            )}
+            {tab === "ahrefs" && (
+              <TabErrorBoundary label="Ahrefs Overview">
+                <CompetitorKeywordsOverview />
               </TabErrorBoundary>
             )}
             {tab === "photos" && (

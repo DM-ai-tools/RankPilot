@@ -9,12 +9,42 @@ from uuid import UUID
 
 from openpyxl import Workbook
 from openpyxl.drawing.image import Image as XLImage
-from openpyxl.styles import Font
+from openpyxl.styles import Alignment, Font
 from PIL import Image as PILImage
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import Settings, get_settings
+
+
+async def _serp_competitors_by_keyword(
+    session: AsyncSession,
+    client_id: UUID,
+    keywords: list[str],
+    *,
+    max_live_lookups: int = 12,
+) -> dict[str, str]:
+    """'keyword' -> '#1 domain.com · #2 other.com' for the export (best effort)."""
+    from app.services.competitor_keywords_service import fetch_keyword_serp_competitors
+
+    out: dict[str, str] = {}
+    live_used = 0
+    for kw in keywords:
+        if live_used >= max_live_lookups:
+            break
+        try:
+            res = await fetch_keyword_serp_competitors(session, client_id, keyword=kw)
+            if not res.from_cache:
+                live_used += 1
+            if res.competitors:
+                out[kw] = "\n".join(
+                    f"#{c.position or '–'} {c.domain}"
+                    + (" · Maps pack" if c.in_local_pack else "")
+                    for c in res.competitors[:5]
+                )
+        except Exception:
+            continue
+    return out
 
 
 def _photo_download_url(photo_id: str | None, client_id: UUID, settings: Settings) -> str:
@@ -196,6 +226,15 @@ async def build_gbp_posts_xlsx(
         )
     ).mappings().all()
 
+    # Competitors ranking on Google for each post's keyword (Ahrefs, 24h cached).
+    distinct_keywords: list[str] = []
+    for r in rows:
+        payload = r["payload"] if isinstance(r["payload"], dict) else {}
+        kw = str((payload or {}).get("target_keyword") or "").strip()
+        if kw and kw.lower() not in {k.lower() for k in distinct_keywords}:
+            distinct_keywords.append(kw)
+    competitors_by_kw = await _serp_competitors_by_keyword(session, client_id, distinct_keywords)
+
     wb = Workbook()
     ws = wb.active
     ws.title = "GBP Posts"
@@ -205,6 +244,7 @@ async def build_gbp_posts_xlsx(
         "Image",
         "Title",
         "Target keyword",
+        "Competitors ranking (Ahrefs)",
         "Status",
         "Scheduled date",
         "Word count",
@@ -226,12 +266,14 @@ async def build_gbp_posts_xlsx(
         photo_id = str(payload.get("photo_id") or "").strip() or None
         gen = r["generated_at"].strftime("%Y-%m-%d %H:%M") if r["generated_at"] else ""
         pub = r["published_at"].strftime("%Y-%m-%d %H:%M") if r["published_at"] else ""
+        target_kw = str(payload.get("target_keyword") or "").strip()
         ws.append(
             [
                 idx,
                 "",  # image is added as a floating picture below
                 payload.get("title"),
                 payload.get("target_keyword"),
+                competitors_by_kw.get(target_kw, ""),
                 str(r["status"]).replace("_", " "),
                 payload.get("scheduled_for"),
                 payload.get("word_count"),
@@ -244,6 +286,9 @@ async def build_gbp_posts_xlsx(
         )
 
         excel_row = idx + 1  # +1 for header row
+        ws.cell(row=excel_row, column=headers.index("Competitors ranking (Ahrefs)") + 1).alignment = (
+            Alignment(wrap_text=True, vertical="top")
+        )
         photo_path = _find_photo_file(photo_id, client_id)
         thumb = _build_thumbnail(photo_path) if photo_path else None
         if thumb:
@@ -262,6 +307,7 @@ async def build_gbp_posts_xlsx(
         "Image": 20,
         "Title": 32,
         "Target keyword": 22,
+        "Competitors ranking (Ahrefs)": 32,
         "Status": 14,
         "Scheduled date": 14,
         "Word count": 11,

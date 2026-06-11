@@ -92,6 +92,86 @@ class KeywordOverviewMetrics(BaseModel):
     global_by_country: list[GlobalVolumeCountry] = Field(default_factory=list)
 
 
+class SiteKeywordItem(BaseModel):
+    keyword: str
+    volume: int | None = None
+    volume_display: str = "—"
+    difficulty: int | None = None
+    competition: str | None = None
+    best_position: int | None = None
+    traffic: int | None = None
+    ranking_url: str | None = None
+    opportunity_score: int = 0
+
+
+class SiteKeywordsResponse(BaseModel):
+    target: str
+    country: str = "au"
+    country_label: str = "Australia"
+    keywords: list[SiteKeywordItem] = Field(default_factory=list)
+    source: str = "ahrefs"
+    message: str | None = None
+    from_cache: bool = False
+    cached_at: str | None = None
+    cache_expires_at: str | None = None
+
+
+class SerpCompetitorItem(BaseModel):
+    position: int | None = None
+    domain: str
+    url: str
+    title: str | None = None
+    traffic: int | None = None
+    in_local_pack: bool = False
+    local_pack_position: int | None = None
+
+
+class KeywordSerpCompetitorsResponse(BaseModel):
+    keyword: str
+    country: str = "au"
+    competitors: list[SerpCompetitorItem] = Field(default_factory=list)
+    source: str = "ahrefs"
+    message: str | None = None
+    from_cache: bool = False
+    cached_at: str | None = None
+    cache_expires_at: str | None = None
+
+
+class CompetitorGbpPost(BaseModel):
+    text: str
+    date: str | None = None
+    url: str | None = None
+    mentions_keyword: bool = False
+
+
+class CompetitorGbpPostsItem(BaseModel):
+    business_name: str
+    domain: str | None = None
+    organic_rank: int | None = None
+    maps_rank: int | None = None
+    in_local_pack: bool = False
+    local_pack_position: int | None = None
+    posts_count: int = 0
+    first_post_date: str | None = None
+    last_post_date: str | None = None
+    posts_per_month: float | None = None
+    keyword_mentions: int = 0
+    top_terms: list[str] = Field(default_factory=list)
+    recent_posts: list[CompetitorGbpPost] = Field(default_factory=list)
+    note: str | None = None
+
+
+class CompetitorGbpPostsResponse(BaseModel):
+    keyword: str
+    competitors: list[CompetitorGbpPostsItem] = Field(default_factory=list)
+    competitor_source: str = "organic_serp"
+    source: str = "dataforseo"
+    message: str | None = None
+    from_cache: bool = False
+    cached_at: str | None = None
+    cache_expires_at: str | None = None
+
+
 class KeywordOverviewResponse(BaseModel):
     keyword: str
     country: str = "au"

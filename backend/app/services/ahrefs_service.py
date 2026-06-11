@@ -300,3 +300,112 @@ class AhrefsClient:
                 if isinstance(row, dict):
                     out.append(self._normalize_row(row))
         return out
+
+    async def serp_overview(
+        self,
+        keyword: str,
+        *,
+        country: str = "au",
+        top_positions: int = 10,
+    ) -> list[dict[str, Any]]:
+        """Top organic Google results for a keyword (who ranks for it)."""
+        keyword = (keyword or "").strip()
+        if not keyword:
+            return []
+        data = await self._get(
+            "serp-overview/serp-overview",
+            {
+                "keyword": keyword,
+                "country": country.strip().lower()[:2],
+                "select": "position,url,title,type,traffic",
+                "top_positions": max(3, min(int(top_positions), 20)),
+            },
+        )
+        rows = data.get("positions") or []
+        out: list[dict[str, Any]] = []
+        if isinstance(rows, list):
+            for row in rows:
+                if not isinstance(row, dict):
+                    continue
+                kinds = row.get("type")
+                kinds = [str(k) for k in kinds] if isinstance(kinds, list) else []
+                # Organic results + Google Maps local pack; skip ads and SERP widgets.
+                if kinds and "organic" not in kinds and "local_pack" not in kinds:
+                    continue
+                url = str(row.get("url") or "").strip()
+                if not url:
+                    continue
+                pos = row.get("position")
+                try:
+                    position = int(pos) if pos is not None else None
+                except (TypeError, ValueError):
+                    position = None
+                traffic = row.get("traffic")
+                try:
+                    traffic_int = int(traffic) if traffic is not None else None
+                except (TypeError, ValueError):
+                    traffic_int = None
+                out.append(
+                    {
+                        "position": position,
+                        "url": url,
+                        "title": str(row.get("title") or "") or None,
+                        "traffic": traffic_int,
+                        "types": kinds,
+                    }
+                )
+        return out
+
+    async def site_organic_keywords(
+        self,
+        target: str,
+        *,
+        country: str | None = None,
+        limit: int = 100,
+    ) -> list[dict[str, Any]]:
+        """Site Explorer — organic keywords a competitor domain ranks for."""
+        target = (target or "").strip()
+        if not target:
+            return []
+        from datetime import date
+
+        params: dict[str, Any] = {
+            "target": target,
+            "date": date.today().isoformat(),
+            "select": "keyword,volume,keyword_difficulty,best_position,sum_traffic,cpc,best_position_url",
+            "limit": max(10, min(int(limit), 200)),
+            "order_by": "sum_traffic:desc",
+            "mode": "subdomains",
+        }
+        if country:
+            params["country"] = country.strip().lower()[:2]
+        data = await self._get("site-explorer/organic-keywords", params)
+        rows = data.get("keywords") or []
+        out: list[dict[str, Any]] = []
+        if isinstance(rows, list):
+            for row in rows:
+                if not isinstance(row, dict):
+                    continue
+                normalized = self._normalize_row(
+                    {
+                        "keyword": row.get("keyword"),
+                        "volume": row.get("volume"),
+                        "difficulty": row.get("keyword_difficulty"),
+                        "traffic_potential": row.get("sum_traffic"),
+                        "cpc": row.get("cpc"),
+                    }
+                )
+                pos = row.get("best_position")
+                try:
+                    normalized["best_position"] = int(pos) if pos is not None else None
+                except (TypeError, ValueError):
+                    normalized["best_position"] = None
+                traffic = row.get("sum_traffic")
+                try:
+                    normalized["traffic"] = int(traffic) if traffic is not None else None
+                except (TypeError, ValueError):
+                    normalized["traffic"] = None
+                normalized["ranking_url"] = str(row.get("best_position_url") or "") or None
+                if normalized["keyword"]:
+                    out.append(normalized)
+        return out

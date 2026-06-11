@@ -6,7 +6,19 @@ from fastapi import APIRouter, Query
 
 from app.deps import CurrentClientId, DbSession
 
-from app.schemas.keywords import KeywordLookupResponse, KeywordOverviewResponse, SuburbKeywordResearchResponse
+from app.schemas.keywords import (
+    CompetitorGbpPostsResponse,
+    KeywordLookupResponse,
+    KeywordOverviewResponse,
+    KeywordSerpCompetitorsResponse,
+    SiteKeywordsResponse,
+    SuburbKeywordResearchResponse,
+)
+from app.services.competitor_gbp_posts_service import fetch_competitor_gbp_posts
+from app.services.competitor_keywords_service import (
+    fetch_competitor_site_keywords,
+    fetch_keyword_serp_competitors,
+)
 from app.services.keyword_lookup_service import lookup_keywords
 from app.services.keyword_overview_service import fetch_keyword_overview
 from app.services.keyword_research_service import fetch_suburb_keyword_research
@@ -47,6 +59,59 @@ async def keyword_overview(
     return await fetch_keyword_overview(
         session, client_id, keyword=keyword, country=country, force_refresh=refresh
     )
+
+
+@router.get("/site-keywords", response_model=SiteKeywordsResponse)
+async def competitor_site_keywords(
+    client_id: CurrentClientId,
+    session: DbSession,
+    target: str = Query(..., min_length=3, max_length=300, description="Competitor website/domain"),
+    country: str | None = Query(default=None, min_length=2, max_length=2),
+    limit: int = Query(default=100, ge=10, le=200),
+    refresh: bool = Query(default=False, description="Bypass 24h Ahrefs cache"),
+) -> SiteKeywordsResponse:
+    """Organic keywords a competitor website ranks for (Ahrefs Site Explorer)."""
+    result = await fetch_competitor_site_keywords(
+        session, client_id, target=target, country=country, limit=limit, force_refresh=refresh
+    )
+    logger.info("site-keywords client=%s target=%s n=%d", client_id, result.target, len(result.keywords))
+    return result
+
+
+@router.get("/serp-competitors", response_model=KeywordSerpCompetitorsResponse)
+async def keyword_serp_competitors(
+    client_id: CurrentClientId,
+    session: DbSession,
+    keyword: str = Query(..., min_length=1, max_length=200),
+    country: str | None = Query(default=None, min_length=2, max_length=2),
+    refresh: bool = Query(default=False, description="Bypass 24h Ahrefs cache"),
+) -> KeywordSerpCompetitorsResponse:
+    """Competitors ranking on Google for this keyword (Ahrefs SERP overview)."""
+    return await fetch_keyword_serp_competitors(
+        session, client_id, keyword=keyword, country=country, force_refresh=refresh
+    )
+
+
+@router.get("/competitor-gbp-posts", response_model=CompetitorGbpPostsResponse)
+async def competitor_gbp_posts(
+    client_id: CurrentClientId,
+    session: DbSession,
+    keyword: str = Query(..., min_length=1, max_length=200),
+    serp_targets: str | None = Query(
+        default=None,
+        description="JSON array of SERP competitors {domain,title,position,in_local_pack,local_pack_position}",
+    ),
+    refresh: bool = Query(default=False, description="Bypass 24h cache"),
+) -> CompetitorGbpPostsResponse:
+    """How competitors use GBP posts — defaults to same organic SERP rivals shown in the UI."""
+    result = await fetch_competitor_gbp_posts(
+        session, client_id, keyword=keyword, serp_targets=serp_targets, force_refresh=refresh
+    )
+    logger.info(
+        "competitor-gbp-posts client=%s keyword=%s competitors=%d",
+        client_id, keyword, len(result.competitors),
+    )
+    return result
 
 
 @router.get("/lookup", response_model=KeywordLookupResponse)

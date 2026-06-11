@@ -172,3 +172,120 @@ export const fetchKeywordOverview = (
   if (refresh) params.set("refresh", "true");
   return apiGet<KeywordOverviewResponse>(`/api/v1/keywords/overview?${params.toString()}`);
 };
+
+export type SiteKeywordItem = {
+  keyword: string;
+  volume: number | null;
+  volume_display: string;
+  difficulty: number | null;
+  competition: string | null;
+  best_position: number | null;
+  traffic: number | null;
+  ranking_url: string | null;
+  opportunity_score: number;
+};
+
+export type SiteKeywordsResponse = {
+  target: string;
+  country: string;
+  country_label: string;
+  keywords: SiteKeywordItem[];
+  source: string;
+  message?: string | null;
+} & KeywordCacheMeta;
+
+export type SerpCompetitorItem = {
+  position: number | null;
+  domain: string;
+  url: string;
+  title: string | null;
+  traffic: number | null;
+  in_local_pack: boolean;
+  local_pack_position: number | null;
+};
+
+export type KeywordSerpCompetitorsResponse = {
+  keyword: string;
+  country: string;
+  competitors: SerpCompetitorItem[];
+  source: string;
+  message?: string | null;
+} & KeywordCacheMeta;
+
+/** Who ranks on Google for this keyword (Ahrefs SERP overview). */
+export const fetchKeywordSerpCompetitors = (
+  keyword: string,
+  country?: string,
+): Promise<KeywordSerpCompetitorsResponse> => {
+  const params = new URLSearchParams({ keyword });
+  if (country) params.set("country", country);
+  return apiGet<KeywordSerpCompetitorsResponse>(
+    `/api/v1/keywords/serp-competitors?${params.toString()}`,
+  );
+};
+
+export type CompetitorGbpPost = {
+  text: string;
+  date: string | null;
+  url: string | null;
+  mentions_keyword: boolean;
+};
+
+export type CompetitorGbpPostsItem = {
+  business_name: string;
+  domain: string | null;
+  organic_rank: number | null;
+  maps_rank: number | null;
+  in_local_pack: boolean;
+  local_pack_position: number | null;
+  posts_count: number;
+  first_post_date: string | null;
+  last_post_date: string | null;
+  posts_per_month: number | null;
+  keyword_mentions: number;
+  top_terms: string[];
+  recent_posts: CompetitorGbpPost[];
+  note: string | null;
+};
+
+export type CompetitorGbpPostsResponse = {
+  keyword: string;
+  competitors: CompetitorGbpPostsItem[];
+  competitor_source: "organic_serp" | "maps_scan" | string;
+  source: string;
+  message?: string | null;
+} & KeywordCacheMeta;
+
+export type SerpTargetForGbpPosts = {
+  domain: string;
+  title?: string | null;
+  position?: number | null;
+  in_local_pack?: boolean;
+  local_pack_position?: number | null;
+};
+
+/** How competitors use GBP posts — pass SERP chips so the same rivals are analyzed. */
+export const fetchCompetitorGbpPosts = (
+  keyword: string,
+  serpTargets?: SerpTargetForGbpPosts[],
+): Promise<CompetitorGbpPostsResponse> => {
+  const params = new URLSearchParams({ keyword });
+  if (serpTargets && serpTargets.length > 0) {
+    params.set("serp_targets", JSON.stringify(serpTargets.slice(0, 3)));
+  }
+  return apiGet<CompetitorGbpPostsResponse>(
+    `/api/v1/keywords/competitor-gbp-posts?${params.toString()}`,
+  );
+};
+
+/** Organic keywords a competitor website ranks for (Ahrefs Site Explorer). */
+export const fetchCompetitorSiteKeywords = (
+  target: string,
+  country?: string,
+  refresh = false,
+): Promise<SiteKeywordsResponse> => {
+  const params = new URLSearchParams({ target });
+  if (country) params.set("country", country);
+  if (refresh) params.set("refresh", "true");
+  return apiGet<SiteKeywordsResponse>(`/api/v1/keywords/site-keywords?${params.toString()}`);
+};
