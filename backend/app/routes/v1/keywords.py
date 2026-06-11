@@ -6,6 +6,8 @@ from fastapi import APIRouter, Query
 
 from app.deps import CurrentClientId, DbSession
 
+from pydantic import BaseModel
+
 from app.schemas.keywords import (
     CompetitorGbpPostsResponse,
     KeywordLookupResponse,
@@ -18,6 +20,13 @@ from app.services.competitor_gbp_posts_service import fetch_competitor_gbp_posts
 from app.services.competitor_keywords_service import (
     fetch_competitor_site_keywords,
     fetch_keyword_serp_competitors,
+)
+from app.services.keyword_tracker_service import (
+    add_keyword,
+    get_keyword_tracker_list,
+    remove_keyword,
+    run_rank_checks,
+    sync_tracked_keywords,
 )
 from app.services.keyword_lookup_service import lookup_keywords
 from app.services.keyword_overview_service import fetch_keyword_overview
@@ -112,6 +121,55 @@ async def competitor_gbp_posts(
         client_id, keyword, len(result.competitors),
     )
     return result
+
+
+class _AddKwBody(BaseModel):
+    keyword: str
+
+
+@router.get("/tracker")
+async def get_tracker(
+    client_id: CurrentClientId,
+    session: DbSession,
+) -> list[dict]:
+    """All tracked keywords with latest organic + Maps positions and 12-week trend."""
+    return await get_keyword_tracker_list(session, client_id)
+
+
+@router.post("/tracker/sync")
+async def sync_tracker(
+    client_id: CurrentClientId,
+    session: DbSession,
+    force: bool = Query(default=False, description="Re-check even if checked today"),
+) -> dict:
+    """Import keywords from GBP posts + run rank checks for all tracked keywords."""
+    added = await sync_tracked_keywords(session, client_id)
+    results = await run_rank_checks(session, client_id, force=force)
+    return {"added_keywords": added, "checked": len(results), "results": results}
+
+
+@router.post("/tracker/add")
+async def tracker_add_keyword(
+    body: _AddKwBody,
+    client_id: CurrentClientId,
+    session: DbSession,
+) -> dict:
+    """Manually add a keyword to track."""
+    is_new = await add_keyword(session, client_id, body.keyword)
+    if is_new:
+        await run_rank_checks(session, client_id, keywords=[body.keyword.strip().lower()])
+    return {"keyword": body.keyword.strip().lower(), "added": is_new}
+
+
+@router.delete("/tracker/{keyword:path}")
+async def tracker_remove_keyword(
+    keyword: str,
+    client_id: CurrentClientId,
+    session: DbSession,
+) -> dict:
+    """Stop tracking a keyword."""
+    await remove_keyword(session, client_id, keyword)
+    return {"keyword": keyword, "removed": True}
 
 
 @router.get("/lookup", response_model=KeywordLookupResponse)

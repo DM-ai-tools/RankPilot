@@ -18,6 +18,7 @@ from app.db.schema_bootstrap import (
     ensure_rp_clients_nap_columns,
     ensure_rp_clients_search_radius,
     ensure_rp_gbp_brand_kit_table,
+    ensure_rp_keyword_tracker_tables,
     ensure_rp_suburb_grid_client_index,
     ensure_rp_suburb_geo_table,
 )
@@ -166,6 +167,10 @@ async def lifespan(_app: FastAPI):
             logger.exception(
                 "Schema bootstrap: rp_ahrefs_keyword_cache (see infra/sql/016_ahrefs_keyword_cache.sql)"
             )
+        try:
+            await ensure_rp_keyword_tracker_tables()
+        except Exception:
+            logger.exception("Schema bootstrap: rp_keyword_tracker / rp_keyword_rank_snapshot")
 
     s = get_settings()
     if str(s.dataforseo_login or "").strip() and str(s.dataforseo_password or "").strip():

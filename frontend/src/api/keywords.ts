@@ -1,4 +1,4 @@
-import { apiGet } from "./client";
+import { apiDelete, apiGet, apiPostJson } from "./client";
 
 export type SuburbKeywordPhrase = {
   keyword: string;
@@ -161,6 +161,41 @@ export type KeywordOverviewResponse = {
   source: string;
   message?: string | null;
 } & KeywordCacheMeta;
+
+// ── Keyword Rank Tracker ─────────────────────────────────────────────────────
+
+export type KeywordRankHistoryPoint = {
+  week: string;
+  organic_position: number | null;
+  maps_position: number | null;
+};
+
+export type TrackedKeyword = {
+  keyword: string;
+  source: "gbp_post" | "manual" | string;
+  added_at: string | null;
+  organic_position: number | null;
+  maps_position: number | null;
+  search_volume: number | null;
+  organic_change: number | null;
+  maps_change: number | null;
+  last_checked: string | null;
+  history: KeywordRankHistoryPoint[];
+};
+
+export const fetchKeywordTracker = (): Promise<TrackedKeyword[]> =>
+  apiGet<TrackedKeyword[]>("/api/v1/keywords/tracker");
+
+export const triggerKeywordTrackerSync = (force = false): Promise<{ added_keywords: number; checked: number }> =>
+  apiPostJson(`/api/v1/keywords/tracker/sync${force ? "?force=true" : ""}`, {});
+
+export const addTrackedKeyword = (keyword: string): Promise<{ keyword: string; added: boolean }> =>
+  apiPostJson("/api/v1/keywords/tracker/add", { keyword });
+
+export const removeTrackedKeyword = (keyword: string): Promise<{ keyword: string; removed: boolean }> =>
+  apiDelete<{ keyword: string; removed: boolean }>(
+    `/api/v1/keywords/tracker/${encodeURIComponent(keyword)}`,
+  );
 
 export const fetchKeywordOverview = (
   keyword: string,

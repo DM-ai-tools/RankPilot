@@ -10,6 +10,7 @@ import {
   ShieldCheck,
   Sparkles,
   Trash2,
+  TrendingUp,
   Upload,
   Wrench,
   X,
@@ -49,6 +50,7 @@ import {
 } from "../api/gbp";
 import { AhrefsKeywordOverview } from "../components/keywords/AhrefsKeywordOverview";
 import { CompetitorKeywordsOverview } from "../components/keywords/CompetitorKeywordsOverview";
+import { KeywordTracker } from "../components/keywords/KeywordTracker";
 import { KeywordCompetitorsPanel } from "../components/keywords/KeywordCompetitorsPanel";
 import { TopBar } from "../components/layout/TopBar";
 import { Badge } from "../components/ui/Badge";
@@ -62,6 +64,7 @@ const TABS = [
   { id: "description", label: "Description & Keywords", icon: KeyRound },
   { id: "keywords", label: "Keyword Research", icon: Search },
   { id: "ahrefs", label: "Ahrefs Overview", icon: Globe },
+  { id: "tracker", label: "Rank Tracker", icon: TrendingUp },
   { id: "photos", label: "Photos", icon: Image },
   { id: "brandkit", label: "Brand Kit", icon: Palette },
   { id: "services", label: "Services & Categories", icon: Wrench },
@@ -2346,6 +2349,11 @@ export function GbpPage() {
             {tab === "ahrefs" && (
               <TabErrorBoundary label="Ahrefs Overview">
                 <CompetitorKeywordsOverview />
+              </TabErrorBoundary>
+            )}
+            {tab === "tracker" && (
+              <TabErrorBoundary label="Rank Tracker">
+                <KeywordTracker />
               </TabErrorBoundary>
             )}
             {tab === "photos" && (

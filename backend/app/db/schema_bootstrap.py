@@ -132,6 +132,61 @@ async def ensure_rp_gbp_brand_kit_table() -> None:
     logger.info("Schema check: rp_gbp_brand_kit present")
 
 
+async def ensure_rp_keyword_tracker_tables() -> None:
+    """Keyword rank monitor — tracked keywords + weekly snapshots."""
+    maker = session_maker()
+    async with maker() as session:
+        await session.execute(
+            text(
+                """
+                CREATE TABLE IF NOT EXISTS rp_keyword_tracker (
+                  id          uuid        PRIMARY KEY DEFAULT gen_random_uuid(),
+                  client_id   uuid        NOT NULL REFERENCES rp_clients(client_id) ON DELETE CASCADE,
+                  keyword     text        NOT NULL,
+                  source      text        NOT NULL DEFAULT 'manual',
+                  added_at    timestamptz NOT NULL DEFAULT now(),
+                  UNIQUE (client_id, keyword)
+                )
+                """
+            )
+        )
+        await session.execute(
+            text(
+                "CREATE INDEX IF NOT EXISTS idx_kw_tracker_client "
+                "ON rp_keyword_tracker (client_id)"
+            )
+        )
+        await session.execute(
+            text(
+                """
+                CREATE TABLE IF NOT EXISTS rp_keyword_rank_snapshot (
+                  id               uuid        PRIMARY KEY DEFAULT gen_random_uuid(),
+                  client_id        uuid        NOT NULL REFERENCES rp_clients(client_id) ON DELETE CASCADE,
+                  keyword          text        NOT NULL,
+                  checked_at       timestamptz NOT NULL DEFAULT now(),
+                  organic_position integer,
+                  maps_position    integer,
+                  search_volume    integer
+                )
+                """
+            )
+        )
+        await session.execute(
+            text(
+                "CREATE UNIQUE INDEX IF NOT EXISTS idx_kw_snap_client_kw_day "
+                "ON rp_keyword_rank_snapshot (client_id, keyword, DATE(checked_at))"
+            )
+        )
+        await session.execute(
+            text(
+                "CREATE INDEX IF NOT EXISTS idx_kw_snap_client_checked "
+                "ON rp_keyword_rank_snapshot (client_id, checked_at DESC)"
+            )
+        )
+        await session.commit()
+    logger.info("Schema check: rp_keyword_tracker + rp_keyword_rank_snapshot present")
+
+
 async def ensure_rp_ahrefs_keyword_cache_table() -> None:
     """Matches infra/sql/016_ahrefs_keyword_cache.sql."""
     maker = session_maker()
