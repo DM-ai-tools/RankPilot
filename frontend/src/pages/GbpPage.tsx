@@ -412,7 +412,7 @@ function PostsTab({
             {d.location_scope === "city" ? (
               <>City — posts use city-wide keywords only (no suburb names).</>
             ) : (
-              <>Suburb — posts use your anchor suburb only.</>
+              <>Radius — posts target suburbs within your service area.</>
             )}
           </span>
           <Link to="/onboarding" className="ml-auto shrink-0 rounded px-2 py-0.5 font-semibold underline hover:no-underline">
@@ -2291,8 +2291,13 @@ export function GbpPage() {
                     </>
                   ) : (
                     <>
-                      <strong>Suburb</strong> — posts use{" "}
-                      <strong>{profileQ.data.primary_suburb || "your anchor suburb"}</strong>.
+                      <strong>Radius</strong> —{" "}
+                      <strong>{profileQ.data.search_radius_km ?? 25} km</strong> from{" "}
+                      <strong>
+                        {profileQ.data.primary_suburb?.trim() ||
+                          `${profileQ.data.metro_label?.split(",")[0]?.trim() ?? "metro"} CBD`}
+                      </strong>
+                      .
                     </>
                   )}
                 </span>

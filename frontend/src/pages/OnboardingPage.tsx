@@ -597,14 +597,14 @@ export function OnboardingPage() {
                   onChange={e=>setKeyword(e.target.value)}
                 />
               </Field>
-              <Field label="Target area" hint="City-wide = all suburbs in the metro. Suburb = radius from one suburb.">
+              <Field label="Target area" hint="City-wide = all suburbs in the metro. Radius = suburbs within your chosen km (optional anchor pin).">
                 <select
                   value={locationScope}
                   onChange={(e) => setLocationScope(e.target.value as LocationScope)}
                   style={{ ...INPUT, cursor: "pointer", marginBottom: 8 }}
                 >
                   <option value="city">City (whole metro)</option>
-                  <option value="suburb">Suburb (local radius)</option>
+                  <option value="suburb">Radius (km from metro or anchor)</option>
                 </select>
               </Field>
               <Field label="City">
@@ -623,22 +623,10 @@ export function OnboardingPage() {
                 </select>
               </Field>
               {locationScope === "suburb" ? (
-                <Field label="Anchor suburb" hint="Maps scan and landing pages centre on this suburb.">
-                  <select
-                    required
-                    value={primarySuburb}
-                    onChange={(e) => setPrimarySuburb(e.target.value)}
-                    style={{ ...INPUT, cursor: "pointer" }}
-                  >
-                    <option value="">Select suburb…</option>
-                    {(suburbCatalogQ.data?.suburbs ?? []).map((s) => (
-                      <option key={s} value={s}>{s}</option>
-                    ))}
-                  </select>
-                </Field>
-              ) : null}
-              {locationScope === "suburb" ? (
-              <Field label="Service radius" hint="We scan suburbs inside this distance from your anchor suburb.">
+              <Field
+                label="Service radius"
+                hint={`We include suburbs within this distance of ${primarySuburb.trim() || `${metro.split(",")[0]} CBD`}.`}
+              >
                 {(() => {
                   const BANDS = [
                     { label: "0–5 km (local block)",    max: 5  },
@@ -689,8 +677,25 @@ export function OnboardingPage() {
                 })()}
               </Field>
               ) : null}
+              {locationScope === "suburb" ? (
+                <Field
+                  label="Anchor suburb (optional)"
+                  hint="Leave blank to use the metro CBD as the centre. Pick a suburb to centre the radius on that area instead."
+                >
+                  <select
+                    value={primarySuburb}
+                    onChange={(e) => setPrimarySuburb(e.target.value)}
+                    style={{ ...INPUT, cursor: "pointer" }}
+                  >
+                    <option value="">Use metro CBD as centre</option>
+                    {(suburbCatalogQ.data?.suburbs ?? []).map((s) => (
+                      <option key={s} value={s}>{s}</option>
+                    ))}
+                  </select>
+                </Field>
+              ) : null}
               {save.isError && <p style={{ color:"#DC2626", fontSize:12, marginBottom:8 }}>{(save.error as Error).message}</p>}
-              <button type="submit" disabled={save.isPending||!businessUrl.trim()||!keyword.trim()||!metro||(locationScope==="suburb"&&!primarySuburb)} style={{ ...CTA_BASE, opacity:save.isPending?0.6:1 }}>
+              <button type="submit" disabled={save.isPending||!businessUrl.trim()||!keyword.trim()||!metro} style={{ ...CTA_BASE, opacity:save.isPending?0.6:1 }}>
                 {save.isPending ? "Saving\u2026" : "Continue \u2192 Connect Accounts"}
               </button>
             </form>
@@ -826,8 +831,8 @@ export function OnboardingPage() {
               {[
                 { label:"Business URL", val:businessUrl||"\u2014" },
                 { label:"Keywords",     val:keyword||"\u2014"     },
-                { label:"Target",       val:locationScope==="city"?`City — ${metro.split(",")[0]}`:`Suburb — ${primarySuburb||metro.split(",")[0]}` },
-                { label: locationScope==="city" ? "Scope" : "Radius", val: locationScope==="city" ? "Whole metro" : `${radius} km` },
+                { label:"Target",       val:locationScope==="city"?`City — ${metro.split(",")[0]}`:`${radius} km radius` },
+                { label: locationScope==="city" ? "Scope" : "Centre", val: locationScope==="city" ? "Whole metro" : (primarySuburb.trim() || `${metro.split(",")[0]} CBD`) },
               ].map((d) => (
                 <div key={d.label} style={{ background:"#F0FDF4", border:"1px solid #DCFCE7", borderRadius:8, padding:"10px 12px" }}>
                   <div style={{ fontSize:9, fontWeight:700, textTransform:"uppercase", letterSpacing:"0.6px", color:"#15803D", marginBottom:3 }}>{d.label}</div>

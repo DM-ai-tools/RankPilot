@@ -470,7 +470,7 @@ export function SeoWebsitePage() {
                     Target:{" "}
                     {meQ.data?.location_scope === "city"
                       ? `City-wide — ${meQ.data?.metro_label ?? "metro"}`
-                      : `Suburb — ${meQ.data?.primary_suburb || "not set"}${meQ.data?.search_radius_km ? ` · ${meQ.data.search_radius_km} km radius` : ""}`}
+                      : `${meQ.data?.search_radius_km ?? 25} km radius · ${meQ.data?.primary_suburb?.trim() || `${(meQ.data?.metro_label || "metro").split(",")[0]} CBD`}`}
                   </p>
                   <div className="flex flex-wrap gap-2">
                     <Button

@@ -14,7 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_ahrefs_api_key, get_settings
 from app.db.session import session_maker
-from app.data.au_suburbs import filter_suburbs_by_radius_km
+from app.data.au_suburbs import filter_suburbs_by_radius_km, filter_suburbs_from_center
 from app.lib.maps_pack_rank import infer_maps_pack_rank
 from app.services.ahrefs_cache_service import build_cache_key, build_suburbs_hash, get_ahrefs_cache, set_ahrefs_cache
 from app.services.dataforseo_service import DataForSEOClient, format_maps_location_name
@@ -145,7 +145,9 @@ async def _run_maps_scan_core(job_id: str, client_id: str, payload: dict, client
             await session.execute(
                 text(
                     """
-                    SELECT client_id, business_url, business_name, metro_label
+                    SELECT client_id, business_url, business_name, metro_label,
+                           COALESCE(primary_suburb, '') AS primary_suburb,
+                           COALESCE(search_radius_km, 25) AS search_radius_km
                     FROM rp_clients
                     WHERE client_id = :cid LIMIT 1
                     """
@@ -182,10 +184,29 @@ async def _run_maps_scan_core(job_id: str, client_id: str, payload: dict, client
             await _update_job(job_id, "failed", error="No suburbs in grid — complete onboarding first")
             return
 
-        radius_km = max(5, min(100, int(payload.get("radius_km") or 25)))
+        radius_km = max(
+            5,
+            min(100, int(payload.get("radius_km") or row.get("search_radius_km") or 25)),
+        )
         suburbs_maps = [dict(s) for s in suburbs_raw]
         suburbs_before = len(suburbs_maps)
-        suburbs_maps = filter_suburbs_by_radius_km(suburbs_maps, metro, radius_km)
+        anchor = str(row.get("primary_suburb") or "").strip()
+        if anchor:
+            centre = next(
+                (s for s in suburbs_maps if str(s.get("suburb", "")).lower() == anchor.lower()),
+                None,
+            )
+            if centre and centre.get("lat") is not None and centre.get("lng") is not None:
+                suburbs_maps = filter_suburbs_from_center(
+                    suburbs_maps,
+                    float(centre["lat"]),
+                    float(centre["lng"]),
+                    radius_km,
+                )
+            else:
+                suburbs_maps = filter_suburbs_by_radius_km(suburbs_maps, metro, radius_km)
+        else:
+            suburbs_maps = filter_suburbs_by_radius_km(suburbs_maps, metro, radius_km)
         suburbs = suburbs_maps
 
         logger.info(
