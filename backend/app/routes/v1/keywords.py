@@ -141,10 +141,17 @@ async def sync_tracker(
     client_id: CurrentClientId,
     session: DbSession,
     force: bool = Query(default=False, description="Re-check even if checked today"),
+    keyword: str | None = Query(
+        default=None,
+        description="Optional single keyword to refresh (faster than full sync)",
+    ),
 ) -> dict:
     """Import keywords from GBP posts + run rank checks for all tracked keywords."""
     added = await sync_tracked_keywords(session, client_id)
-    results = await run_rank_checks(session, client_id, force=force)
+    kw_list = [keyword.strip().lower()] if keyword and keyword.strip() else None
+    results = await run_rank_checks(
+        session, client_id, keywords=kw_list, force=force or bool(kw_list)
+    )
     return {"added_keywords": added, "checked": len(results), "results": results}
 
 

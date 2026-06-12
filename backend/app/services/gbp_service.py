@@ -2222,11 +2222,22 @@ async def publish_gbp_queue_post(
         {"id": post_id, "cid": str(client_id), "payload": json.dumps(payload)},
     )
     updated = r.mappings().first()
+
+    target_kw = str(payload.get("target_keyword") or "").strip()
+    if target_kw:
+        from app.services.keyword_tracker_service import track_published_post_keyword
+
+        try:
+            await track_published_post_keyword(session, client_id, target_kw)
+        except Exception:
+            logger.warning("Rank tracker update failed for %r", target_kw, exc_info=True)
+
     return {
         "id": str(updated["id"]),
         "status": updated["status"],
         "body": post_body,
         "note": note,
+        "tracked_keyword": target_kw or None,
     }
 
 

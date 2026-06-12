@@ -172,7 +172,7 @@ export type KeywordRankHistoryPoint = {
 
 export type TrackedKeyword = {
   keyword: string;
-  source: "gbp_post" | "manual" | string;
+  source: "gbp_post_published" | "gbp_post" | "manual" | string;
   added_at: string | null;
   organic_position: number | null;
   maps_position: number | null;
@@ -180,6 +180,7 @@ export type TrackedKeyword = {
   organic_change: number | null;
   maps_change: number | null;
   last_checked: string | null;
+  rank_note: string | null;
   history: KeywordRankHistoryPoint[];
 };
 

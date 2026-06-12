@@ -96,8 +96,8 @@ function ChangeBadge({ change }: { change: number | null }) {
 
 // ── Rank cell ─────────────────────────────────────────────────────────────────
 
-function RankCell({ pos }: { pos: number | null }) {
-  if (pos === null) return <span className="text-gray-400 text-sm">—</span>;
+function RankCell({ pos, emptyLabel = "—" }: { pos: number | null; emptyLabel?: string }) {
+  if (pos === null) return <span className="text-gray-400 text-sm">{emptyLabel}</span>;
   const color =
     pos <= 3
       ? "bg-emerald-100 text-emerald-700"
@@ -152,6 +152,177 @@ export function KeywordTracker() {
 
   const handleSync = (force: boolean) => syncMutation.mutate(force);
 
+  const publishedKeywords = keywords.filter((k) => k.source === "gbp_post_published");
+  const otherKeywords = keywords.filter((k) => k.source !== "gbp_post_published");
+
+  const sourceBadge = (source: string) => {
+    if (source === "gbp_post_published") {
+      return (
+        <span className="inline-block rounded px-1.5 py-0.5 text-xs font-semibold bg-emerald-100 text-emerald-800 ring-1 ring-emerald-300/70">
+          Live on GBP
+        </span>
+      );
+    }
+    if (source === "gbp_post") {
+      return (
+        <span className="inline-block rounded px-1.5 py-0.5 text-xs bg-indigo-100 text-indigo-700">
+          GBP draft
+        </span>
+      );
+    }
+    return (
+      <span className="inline-block rounded px-1.5 py-0.5 text-xs bg-gray-100 text-gray-600">
+        Manual
+      </span>
+    );
+  };
+
+  const renderKeywordRows = (items: TrackedKeyword[]) =>
+    items.map((kw) => {
+      const isExpanded = expandedKw === kw.keyword;
+      const organicHistory = kw.history.map((h) => h.organic_position);
+      const mapsHistory = kw.history.map((h) => h.maps_position);
+      const isPublished = kw.source === "gbp_post_published";
+
+      return (
+        <>
+          <tr
+            key={kw.keyword}
+            className={`hover:bg-gray-50 cursor-pointer ${
+              isPublished ? "bg-emerald-50/40" : ""
+            }`}
+            onClick={() => setExpandedKw(isExpanded ? null : kw.keyword)}
+          >
+            <td className="px-4 py-2.5 font-medium text-gray-900 max-w-[220px]">
+              <span className="truncate block">{kw.keyword}</span>
+              {kw.rank_note && (
+                <span className="mt-0.5 block text-[10px] font-normal leading-snug text-amber-700">
+                  {kw.rank_note}
+                </span>
+              )}
+            </td>
+            <td className="px-4 py-2.5 text-center">
+              <RankCell
+                pos={kw.organic_position}
+                emptyLabel={kw.search_volume != null && kw.last_checked ? "N/R" : "—"}
+              />
+            </td>
+            <td className="px-4 py-2.5 text-center">
+              <ChangeBadge change={kw.organic_change} />
+            </td>
+            <td className="px-4 py-2.5 text-center">
+              <RankCell
+                pos={kw.maps_position}
+                emptyLabel={kw.last_checked ? "N/R" : "—"}
+              />
+            </td>
+            <td className="px-4 py-2.5 text-center">
+              <ChangeBadge change={kw.maps_change} />
+            </td>
+            <td className="px-4 py-2.5 text-center text-gray-600">
+              {kw.search_volume != null
+                ? kw.search_volume >= 1000
+                  ? `${(kw.search_volume / 1000).toFixed(1)}k`
+                  : String(kw.search_volume)
+                : "—"}
+            </td>
+            <td className="px-4 py-2.5 text-center">
+              <Sparkline data={organicHistory} color={isPublished ? "#059669" : "#6366f1"} />
+            </td>
+            <td className="px-4 py-2.5 text-center">{sourceBadge(kw.source)}</td>
+            <td className="px-4 py-2.5 text-right text-gray-400 text-xs whitespace-nowrap">
+              {lastChecked(kw)}
+            </td>
+            <td className="px-4 py-2.5 text-right">
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  removeMutation.mutate(kw.keyword);
+                }}
+                disabled={removeMutation.isPending}
+                className="p-1 text-gray-400 hover:text-red-500 rounded transition-colors"
+                title="Stop tracking"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+              </button>
+            </td>
+          </tr>
+
+          {isExpanded && (
+            <tr key={`${kw.keyword}-exp`} className="bg-indigo-50/40">
+              <td colSpan={10} className="px-6 py-4">
+                <div className="grid grid-cols-2 gap-6">
+                  <div>
+                    <p className="text-xs font-semibold text-gray-700 mb-2 uppercase tracking-wide">
+                      Organic position — weekly history
+                    </p>
+                    {organicHistory.some((v) => v !== null) ? (
+                      <table className="text-xs w-full">
+                        <thead>
+                          <tr className="text-gray-500">
+                            <th className="text-left pb-1">Week</th>
+                            <th className="text-center pb-1">Organic</th>
+                            <th className="text-center pb-1">Maps</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {kw.history.map((h) => (
+                            <tr key={h.week} className="border-t border-indigo-100">
+                              <td className="py-0.5 text-gray-500">{h.week}</td>
+                              <td className="py-0.5 text-center">
+                                <RankCell pos={h.organic_position} />
+                              </td>
+                              <td className="py-0.5 text-center">
+                                <RankCell pos={h.maps_position} />
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    ) : (
+                      <p className="text-xs text-gray-400 italic">
+                        No history yet — sync to start tracking.
+                      </p>
+                    )}
+                  </div>
+
+                  <div>
+                    <p className="text-xs font-semibold text-gray-700 mb-2 uppercase tracking-wide">
+                      Maps position trend
+                    </p>
+                    <div className="flex items-end gap-4">
+                      <Sparkline data={mapsHistory} color="#10b981" />
+                      <div className="space-y-1 text-xs text-gray-600">
+                        <div>
+                          <span className="text-gray-400">Current organic:</span>{" "}
+                          <strong>
+                            {kw.organic_position !== null ? `#${kw.organic_position}` : "—"}
+                          </strong>
+                        </div>
+                        <div>
+                          <span className="text-gray-400">Current Maps:</span>{" "}
+                          <strong>
+                            {kw.maps_position !== null ? `#${kw.maps_position}` : "—"}
+                          </strong>
+                        </div>
+                        <div>
+                          <span className="text-gray-400">Volume:</span>{" "}
+                          <strong>
+                            {kw.search_volume !== null ? kw.search_volume.toLocaleString() : "—"}
+                            /mo
+                          </strong>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </td>
+            </tr>
+          )}
+        </>
+      );
+    });
+
   const handleAdd = () => {
     const kw = newKw.trim();
     if (!kw) return;
@@ -178,7 +349,7 @@ export function KeywordTracker() {
           <div>
             <h2 className="text-base font-semibold text-gray-900">Keyword Rank Tracker</h2>
             <p className="text-xs text-gray-500">
-              Weekly monitoring of your GBP post keywords — Google organic & Maps positions
+              Keywords from your published GBP posts are tracked here — check organic &amp; Maps rank weekly
             </p>
           </div>
         </div>
@@ -267,181 +438,72 @@ export function KeywordTracker() {
       ) : error ? (
         <p className="text-sm text-red-600">{formatApiError(error)}</p>
       ) : keywords.length === 0 ? (
-        <div className="py-10 text-center text-gray-500 text-sm space-y-1">
+        <div className="py-10 text-center text-gray-500 text-sm space-y-2">
           <p className="font-medium">No keywords tracked yet</p>
           <p>
-            Click <strong>Sync &amp; Check ranks</strong> to automatically import keywords from your
-            GBP posts, or add one manually above.
+            Click <strong>Sync &amp; Check ranks</strong> to pull keywords from your published GBP posts
+            (e.g. <em>SEO services Melbourne</em>), or add one manually above.
           </p>
         </div>
       ) : (
-        <div className="overflow-x-auto rounded-xl border border-gray-200">
-          <table className="min-w-full text-sm">
-            <thead className="bg-gray-50 border-b border-gray-200">
-              <tr>
-                <th className="px-4 py-2.5 text-left font-medium text-gray-600 w-48">Keyword</th>
-                <th className="px-4 py-2.5 text-center font-medium text-gray-600">Organic rank</th>
-                <th className="px-4 py-2.5 text-center font-medium text-gray-600">Δ week</th>
-                <th className="px-4 py-2.5 text-center font-medium text-gray-600">Maps rank</th>
-                <th className="px-4 py-2.5 text-center font-medium text-gray-600">Δ week</th>
-                <th className="px-4 py-2.5 text-center font-medium text-gray-600">Volume</th>
-                <th className="px-4 py-2.5 text-center font-medium text-gray-600">Organic trend (12w)</th>
-                <th className="px-4 py-2.5 text-center font-medium text-gray-600">Source</th>
-                <th className="px-4 py-2.5 text-right font-medium text-gray-600">Last checked</th>
-                <th className="px-4 py-2.5" />
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-gray-100">
-              {keywords.map((kw) => {
-                const isExpanded = expandedKw === kw.keyword;
-                const organicHistory = kw.history.map((h) => h.organic_position);
-                const mapsHistory = kw.history.map((h) => h.maps_position);
+        <div className="space-y-4">
+          {publishedKeywords.length > 0 && (
+            <div className="overflow-x-auto rounded-xl border border-emerald-200">
+              <div className="border-b border-emerald-200 bg-emerald-50 px-4 py-2 text-xs font-semibold uppercase tracking-wide text-emerald-800">
+                Published GBP keywords ({publishedKeywords.length})
+              </div>
+              <table className="min-w-full text-sm">
+                <thead className="bg-gray-50 border-b border-gray-200">
+                  <tr>
+                    <th className="px-4 py-2.5 text-left font-medium text-gray-600 w-48">Keyword</th>
+                    <th className="px-4 py-2.5 text-center font-medium text-gray-600">Organic rank</th>
+                    <th className="px-4 py-2.5 text-center font-medium text-gray-600">Δ week</th>
+                    <th className="px-4 py-2.5 text-center font-medium text-gray-600">Maps rank</th>
+                    <th className="px-4 py-2.5 text-center font-medium text-gray-600">Δ week</th>
+                    <th className="px-4 py-2.5 text-center font-medium text-gray-600">Volume</th>
+                    <th className="px-4 py-2.5 text-center font-medium text-gray-600">Organic trend (12w)</th>
+                    <th className="px-4 py-2.5 text-center font-medium text-gray-600">Source</th>
+                    <th className="px-4 py-2.5 text-right font-medium text-gray-600">Last checked</th>
+                    <th className="px-4 py-2.5" />
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-100">{renderKeywordRows(publishedKeywords)}</tbody>
+              </table>
+            </div>
+          )}
 
-                return (
-                  <>
-                    <tr
-                      key={kw.keyword}
-                      className="hover:bg-gray-50 cursor-pointer"
-                      onClick={() => setExpandedKw(isExpanded ? null : kw.keyword)}
-                    >
-                      <td className="px-4 py-2.5 font-medium text-gray-900 max-w-[200px] truncate">
-                        {kw.keyword}
-                      </td>
-                      <td className="px-4 py-2.5 text-center">
-                        <RankCell pos={kw.organic_position} />
-                      </td>
-                      <td className="px-4 py-2.5 text-center">
-                        <ChangeBadge change={kw.organic_change} />
-                      </td>
-                      <td className="px-4 py-2.5 text-center">
-                        <RankCell pos={kw.maps_position} />
-                      </td>
-                      <td className="px-4 py-2.5 text-center">
-                        <ChangeBadge change={kw.maps_change} />
-                      </td>
-                      <td className="px-4 py-2.5 text-center text-gray-600">
-                        {kw.search_volume != null
-                          ? kw.search_volume >= 1000
-                            ? `${(kw.search_volume / 1000).toFixed(1)}k`
-                            : String(kw.search_volume)
-                          : "—"}
-                      </td>
-                      <td className="px-4 py-2.5 text-center">
-                        <Sparkline data={organicHistory} color="#6366f1" />
-                      </td>
-                      <td className="px-4 py-2.5 text-center">
-                        <span
-                          className={`inline-block px-1.5 py-0.5 rounded text-xs ${
-                            kw.source === "gbp_post"
-                              ? "bg-indigo-100 text-indigo-700"
-                              : "bg-gray-100 text-gray-600"
-                          }`}
-                        >
-                          {kw.source === "gbp_post" ? "GBP post" : "Manual"}
-                        </span>
-                      </td>
-                      <td className="px-4 py-2.5 text-right text-gray-400 text-xs whitespace-nowrap">
-                        {lastChecked(kw)}
-                      </td>
-                      <td className="px-4 py-2.5 text-right">
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            removeMutation.mutate(kw.keyword);
-                          }}
-                          disabled={removeMutation.isPending}
-                          className="p-1 text-gray-400 hover:text-red-500 rounded transition-colors"
-                          title="Stop tracking"
-                        >
-                          <Trash2 className="w-3.5 h-3.5" />
-                        </button>
-                      </td>
-                    </tr>
-
-                    {isExpanded && (
-                      <tr key={`${kw.keyword}-exp`} className="bg-indigo-50/40">
-                        <td colSpan={10} className="px-6 py-4">
-                          <div className="grid grid-cols-2 gap-6">
-                            {/* Organic trend table */}
-                            <div>
-                              <p className="text-xs font-semibold text-gray-700 mb-2 uppercase tracking-wide">
-                                Organic position — weekly history
-                              </p>
-                              {organicHistory.some((v) => v !== null) ? (
-                                <table className="text-xs w-full">
-                                  <thead>
-                                    <tr className="text-gray-500">
-                                      <th className="text-left pb-1">Week</th>
-                                      <th className="text-center pb-1">Organic</th>
-                                      <th className="text-center pb-1">Maps</th>
-                                    </tr>
-                                  </thead>
-                                  <tbody>
-                                    {kw.history.map((h) => (
-                                      <tr key={h.week} className="border-t border-indigo-100">
-                                        <td className="py-0.5 text-gray-500">{h.week}</td>
-                                        <td className="py-0.5 text-center">
-                                          <RankCell pos={h.organic_position} />
-                                        </td>
-                                        <td className="py-0.5 text-center">
-                                          <RankCell pos={h.maps_position} />
-                                        </td>
-                                      </tr>
-                                    ))}
-                                  </tbody>
-                                </table>
-                              ) : (
-                                <p className="text-xs text-gray-400 italic">
-                                  No history yet — sync to start tracking.
-                                </p>
-                              )}
-                            </div>
-
-                            {/* Maps sparkline */}
-                            <div>
-                              <p className="text-xs font-semibold text-gray-700 mb-2 uppercase tracking-wide">
-                                Maps position trend
-                              </p>
-                              <div className="flex items-end gap-4">
-                                <Sparkline data={mapsHistory} color="#10b981" />
-                                <div className="space-y-1 text-xs text-gray-600">
-                                  <div>
-                                    <span className="text-gray-400">Current organic:</span>{" "}
-                                    <strong>
-                                      {kw.organic_position !== null ? `#${kw.organic_position}` : "—"}
-                                    </strong>
-                                  </div>
-                                  <div>
-                                    <span className="text-gray-400">Current Maps:</span>{" "}
-                                    <strong>
-                                      {kw.maps_position !== null ? `#${kw.maps_position}` : "—"}
-                                    </strong>
-                                  </div>
-                                  <div>
-                                    <span className="text-gray-400">Volume:</span>{" "}
-                                    <strong>
-                                      {kw.search_volume !== null ? kw.search_volume.toLocaleString() : "—"}
-                                      /mo
-                                    </strong>
-                                  </div>
-                                </div>
-                              </div>
-                            </div>
-                          </div>
-                        </td>
-                      </tr>
-                    )}
-                  </>
-                );
-              })}
-            </tbody>
-          </table>
+          {otherKeywords.length > 0 && (
+            <div className="overflow-x-auto rounded-xl border border-gray-200">
+              {publishedKeywords.length > 0 && (
+                <div className="border-b border-gray-200 bg-gray-50 px-4 py-2 text-xs font-semibold uppercase tracking-wide text-gray-600">
+                  Other tracked keywords ({otherKeywords.length})
+                </div>
+              )}
+              <table className="min-w-full text-sm">
+                <thead className="bg-gray-50 border-b border-gray-200">
+                  <tr>
+                    <th className="px-4 py-2.5 text-left font-medium text-gray-600 w-48">Keyword</th>
+                    <th className="px-4 py-2.5 text-center font-medium text-gray-600">Organic rank</th>
+                    <th className="px-4 py-2.5 text-center font-medium text-gray-600">Δ week</th>
+                    <th className="px-4 py-2.5 text-center font-medium text-gray-600">Maps rank</th>
+                    <th className="px-4 py-2.5 text-center font-medium text-gray-600">Δ week</th>
+                    <th className="px-4 py-2.5 text-center font-medium text-gray-600">Volume</th>
+                    <th className="px-4 py-2.5 text-center font-medium text-gray-600">Organic trend (12w)</th>
+                    <th className="px-4 py-2.5 text-center font-medium text-gray-600">Source</th>
+                    <th className="px-4 py-2.5 text-right font-medium text-gray-600">Last checked</th>
+                    <th className="px-4 py-2.5" />
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-100">{renderKeywordRows(otherKeywords)}</tbody>
+              </table>
+            </div>
+          )}
         </div>
       )}
 
       <p className="text-xs text-gray-400">
-        Organic rank from Ahrefs SERP overview · Maps rank from latest Google Maps scan ·
-        Positions refresh automatically when you click "Sync &amp; Check ranks"
+        Organic rank = your website position (Ahrefs) · Maps rank = your GBP in Google Maps (DataForSEO live
+        check at your primary suburb) · Publishing a GBP post auto-tracks its keyword and checks ranks
       </p>
     </div>
   );

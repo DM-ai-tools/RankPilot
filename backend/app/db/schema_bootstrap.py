@@ -163,6 +163,7 @@ async def ensure_rp_keyword_tracker_tables() -> None:
                   id               uuid        PRIMARY KEY DEFAULT gen_random_uuid(),
                   client_id        uuid        NOT NULL REFERENCES rp_clients(client_id) ON DELETE CASCADE,
                   keyword          text        NOT NULL,
+                  check_date       date        NOT NULL DEFAULT CURRENT_DATE,
                   checked_at       timestamptz NOT NULL DEFAULT now(),
                   organic_position integer,
                   maps_position    integer,
@@ -173,8 +174,17 @@ async def ensure_rp_keyword_tracker_tables() -> None:
         )
         await session.execute(
             text(
+                "ALTER TABLE rp_keyword_rank_snapshot "
+                "ADD COLUMN IF NOT EXISTS check_date date NOT NULL DEFAULT CURRENT_DATE"
+            )
+        )
+        await session.execute(
+            text("DROP INDEX IF EXISTS idx_kw_snap_client_kw_day")
+        )
+        await session.execute(
+            text(
                 "CREATE UNIQUE INDEX IF NOT EXISTS idx_kw_snap_client_kw_day "
-                "ON rp_keyword_rank_snapshot (client_id, keyword, DATE(checked_at))"
+                "ON rp_keyword_rank_snapshot (client_id, keyword, check_date)"
             )
         )
         await session.execute(

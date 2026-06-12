@@ -2143,7 +2143,10 @@ export function GbpPage() {
   const publishPost = useMutation({
     mutationFn: ({ id, body }: { id: string; body: string }) =>
       updateGbpPost(id, { status: "published", body }),
-    onSuccess: () => void qc.invalidateQueries({ queryKey: ["gbp"] }),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ["gbp"] });
+      void qc.invalidateQueries({ queryKey: ["keyword-tracker"] });
+    },
   });
 
   const syncPosts = useMutation({
