@@ -29,9 +29,9 @@ from app.services.gbp_photos_service import (
     _mime_for_path,
     delete_gbp_photo,
     generate_gbp_photo,
-    get_photo_file_path,
     list_gbp_photos,
     publish_gbp_photo,
+    resolve_photo_file,
     resolve_publish_source_file,
     upload_gbp_photo,
 )
@@ -57,7 +57,7 @@ _bearer = HTTPBearer(auto_error=False)
 
 async def _client_id_or_token_param(
     credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(_bearer)],
-    token: str | None = None,
+    token: Annotated[str | None, Query(description="JWT for browser <img> tags")] = None,
 ) -> UUID:
     """Auth dep that also accepts ?token=<jwt> for browser image requests."""
     from uuid import UUID as _UUID
@@ -322,10 +322,21 @@ async def api_list_gbp_photos(client_id: CurrentClientId, session: DbSession) ->
 async def api_get_photo_file(
     photo_id: str,
     client_id: TokenClientId,
-    session: DbSession,
-) -> FileResponse:
-    """Serve photo file — supports ?token= for browser img tags."""
-    path = await get_photo_file_path(session, client_id, photo_id)
+):
+    """Serve photo file — supports ?token= for browser img tags (no DbSession — Bearer-only dep breaks <img>)."""
+    from fastapi.responses import RedirectResponse
+    from sqlalchemy import text
+
+    from app.db.session import session_maker
+
+    async with session_maker()() as session:
+        await session.execute(
+            text("SELECT set_config('app.client_id', :cid, true)"),
+            {"cid": str(client_id)},
+        )
+        path, redirect = await resolve_photo_file(session, client_id, photo_id)
+    if redirect:
+        return RedirectResponse(redirect, status_code=302)
     return FileResponse(str(path), media_type=_mime_for_path(path))
 
 

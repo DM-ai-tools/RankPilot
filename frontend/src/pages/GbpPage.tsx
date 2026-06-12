@@ -41,6 +41,7 @@ import {
   uploadGbpBrandLogo,
   uploadGbpPhoto,
   gbpListingDescription,
+  gbpPhotoFileUrl,
   type GbpBrandKit,
   type GbpOverview,
   type GbpPhoto,
@@ -389,9 +390,7 @@ function PostsTab({
     });
   }, [draft?.id, draft?.body]);
 
-  const photoUrl = draft?.photo_id
-    ? `/api/v1/gbp/photos/${draft.photo_id}/file`
-    : null;
+  const photoUrl = draft?.photo_id ? gbpPhotoFileUrl(draft.photo_id, token) : null;
 
   const charCount = editBody.trim().length;
 
@@ -736,7 +735,7 @@ function PostsTab({
                       Post image (Runway)
                     </p>
                     <img
-                      src={`${photoUrl}${token ? `?token=${token}` : ""}`}
+                      src={photoUrl}
                       alt="Post"
                       className="max-h-48 w-full rounded object-cover"
                       onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }}
@@ -881,7 +880,7 @@ function PostsTab({
               {photoUrl ? (
                 <div className="mx-3 mt-2 overflow-hidden rounded">
                   <img
-                    src={`${photoUrl}${token ? `?token=${token}` : ""}`}
+                    src={photoUrl}
                     alt="Post image"
                     className="h-28 w-full object-cover"
                     onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }}
@@ -1810,7 +1809,7 @@ function PhotosTab({ d, token }: { d: GbpOverview; token: string | null }) {
         ) : (
           <div className="grid gap-3 p-4 sm:grid-cols-2 lg:grid-cols-3">
               {photos.map((ph) => {
-              const src = `/api/v1/gbp/photos/${ph.id}/file${token ? `?token=${token}` : ""}`;
+              const src = gbpPhotoFileUrl(ph.id, token);
               const caption = photoDisplayLabel(ph);
               return (
               <div key={ph.id} className="group relative overflow-hidden rounded-lg border border-rp-border bg-rp-light">
@@ -1824,8 +1823,19 @@ function PhotosTab({ d, token }: { d: GbpOverview; token: string | null }) {
                     src={src}
                     alt={caption}
                     className="h-36 w-full object-cover transition group-hover:opacity-90"
-                    onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }}
+                    onError={(e) => {
+                      const el = e.target as HTMLImageElement;
+                      el.style.display = "none";
+                      const fallback = el.nextElementSibling as HTMLElement | null;
+                      if (fallback) fallback.style.display = "flex";
+                    }}
                   />
+                  <div
+                    className="hidden h-36 w-full items-center justify-center bg-[#F1F3F4] px-2 text-center text-[11px] text-[#9AA0A6]"
+                    aria-hidden
+                  >
+                    Preview unavailable
+                  </div>
                 </button>
                 <div className="p-2">
                   <p className="truncate text-[11px] text-rp-tlight">{caption}</p>

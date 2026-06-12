@@ -468,7 +468,7 @@ export function DashboardPage() {
                 <CardHeader title="Actions Taken This Week" subtitle="Recent GBP and content activity" />
                 {o.activity.length === 0 ? (
                   <div className="px-4 py-6 text-center text-[12px] text-rp-tlight">
-                    No activity logged yet — run your first scan.
+                    No GBP posts published this week yet — publish a post from the GBP tab to see it here.
                   </div>
                 ) : (
                   o.activity.slice(0, 5).map((f) => (

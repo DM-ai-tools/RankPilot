@@ -1,5 +1,6 @@
 import type { GbpActivityResponse } from "./types";
 import { apiDelete, apiGet, apiGetBlob, apiPatchJson, apiPostFormData, apiPostJson } from "./client";
+import { useAuthStore } from "../stores/authStore";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -102,6 +103,19 @@ export type GbpOverview = {
 };
 
 // ── Overview ──────────────────────────────────────────────────────────────────
+
+/** Authenticated GBP photo URL for <img src> (JWT in query — img tags cannot send Authorization). */
+export function gbpPhotoFileUrl(photoId: string, token?: string | null): string {
+  const jwt = token ?? useAuthStore.getState().accessToken;
+  const path = `/api/v1/gbp/photos/${photoId}/file`;
+  // Dev: same-origin via Vite proxy. Prod: optional absolute API base.
+  const base = import.meta.env.DEV
+    ? ""
+    : String(import.meta.env.VITE_API_BASE_URL ?? "").trim().replace(/\/+$/, "");
+  const url = base ? `${base}${path}` : path;
+  if (!jwt) return url;
+  return `${url}?${new URLSearchParams({ token: jwt }).toString()}`;
+}
 
 export const fetchGbpOverview = (): Promise<GbpOverview> =>
   apiGet<GbpOverview>("/api/v1/gbp/overview");

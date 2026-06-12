@@ -1,6 +1,6 @@
 """L2: Dashboard overview — aggregates SEO tables (Maps ranks, content queue)."""
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from urllib.parse import quote_plus
 from uuid import UUID
 
@@ -335,37 +335,55 @@ class OverviewService:
 
         seo = visibility_score_pct(rank_rows)
 
+        week_start = datetime.now(UTC) - timedelta(days=7)
         content_rows = (
             await session.execute(
                 text(
                     """
-                    SELECT content_type, payload, status, generated_at, created_at
+                    SELECT content_type, payload, status, generated_at, published_at, created_at
                     FROM rp_content_queue
                     WHERE client_id = :cid
-                    ORDER BY COALESCE(generated_at, created_at) DESC
+                      AND status = 'published'
+                      AND COALESCE(published_at, generated_at, created_at) >= :week_start
+                    ORDER BY COALESCE(published_at, generated_at, created_at) DESC
                     LIMIT 8
                     """
                 ),
-                {"cid": str(client_id)},
+                {"cid": str(client_id), "week_start": week_start},
             )
         ).mappings().all()
 
         activity: list[ActivityItem] = []
         now = datetime.now(UTC)
         for cr in content_rows:
-            title = ""
-            if cr["payload"] and isinstance(cr["payload"], dict):
-                title = str(cr["payload"].get("title") or "")
-            ts = cr["generated_at"] or cr["created_at"]
+            payload = cr["payload"] if isinstance(cr["payload"], dict) else {}
+            title = str(payload.get("title") or "")
+            target_kw = str(payload.get("target_keyword") or "").strip()
+            ctype = str(cr["content_type"] or "")
+            ts = cr["published_at"] or cr["generated_at"] or cr["created_at"]
             if ts is None:
                 continue
             if ts.tzinfo is None:
                 ts = ts.replace(tzinfo=UTC)
+
+            if ctype == "gbp_post":
+                icon = "📍"
+                heading = "GBP post published"
+                detail = target_kw or title or "Google Business post"
+            elif ctype == "gbp_description":
+                icon = "🏢"
+                heading = "GBP description published"
+                detail = title or "Business description updated on Google"
+            else:
+                icon = "📄"
+                heading = ctype.replace("_", " ").title()
+                detail = title or "Content published"
+
             activity.append(
                 ActivityItem(
-                    icon="📄" if cr["content_type"] != "gbp_description" else "🏢",
-                    heading=f"{cr['content_type'].replace('_', ' ').title()}",
-                    detail=title or "Queued content",
+                    icon=icon,
+                    heading=heading,
+                    detail=detail,
                     occurred_at=ts,
                 )
             )

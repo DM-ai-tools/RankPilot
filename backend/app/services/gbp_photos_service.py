@@ -247,7 +247,7 @@ async def resolve_publish_source_file(
         await session.execute(
             text(
                 """
-                SELECT storage_path FROM rp_gbp_photos
+                SELECT storage_path, external_source_url FROM rp_gbp_photos
                 WHERE id = :id AND client_id = :cid
                   AND status IN ('ready', 'published')
                 """
@@ -258,12 +258,18 @@ async def resolve_publish_source_file(
     if not row:
         raise HTTPException(status_code=404, detail="Photo not found")
     path = Path(str(row["storage_path"]))
-    if not path.is_file():
-        raise HTTPException(status_code=404, detail="Photo file missing on server")
-    cached = _gbp_publish_cache_path(path)
-    if cached.is_file():
-        return cached
-    return path
+    if path.is_file():
+        cached = _gbp_publish_cache_path(path)
+        if cached.is_file():
+            return cached
+        return path
+    ext = str(row.get("external_source_url") or "").strip()
+    if ext.startswith("http://") or ext.startswith("https://"):
+        raise HTTPException(
+            status_code=404,
+            detail="Photo file missing on server — re-generate or upload the image",
+        )
+    raise HTTPException(status_code=404, detail="Photo file missing on server")
 
 
 async def resolve_post_image_source_url(
@@ -305,13 +311,16 @@ async def resolve_post_image_source_url(
         return None
 
 
-async def get_photo_file_path(session: AsyncSession, client_id: UUID, photo_id: str) -> Path:
+async def resolve_photo_file(
+    session: AsyncSession, client_id: UUID, photo_id: str
+) -> tuple[Path | None, str | None]:
+    """Local file path, or external Runway/CDN URL when the on-disk copy is missing."""
     await _ensure_photos_table(session)
     row = (
         await session.execute(
             text(
                 """
-                SELECT storage_path FROM rp_gbp_photos
+                SELECT storage_path, external_source_url FROM rp_gbp_photos
                 WHERE id = :id AND client_id = :cid AND status IN ('ready', 'published')
                 """
             ),
@@ -321,9 +330,21 @@ async def get_photo_file_path(session: AsyncSession, client_id: UUID, photo_id: 
     if not row:
         raise HTTPException(status_code=404, detail="Photo not found")
     path = Path(str(row["storage_path"]))
-    if not path.is_file():
+    if path.is_file():
+        return path, None
+    ext = str(row.get("external_source_url") or "").strip()
+    if ext.startswith("http://") or ext.startswith("https://"):
+        return None, ext
+    raise HTTPException(status_code=404, detail="Photo file missing on server")
+
+
+async def get_photo_file_path(session: AsyncSession, client_id: UUID, photo_id: str) -> Path:
+    path, ext = await resolve_photo_file(session, client_id, photo_id)
+    if path is not None:
+        return path
+    if ext:
         raise HTTPException(status_code=404, detail="Photo file missing on server")
-    return path
+    raise HTTPException(status_code=404, detail="Photo not found")
 
 
 async def upload_gbp_photo(
