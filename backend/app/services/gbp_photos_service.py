@@ -266,6 +266,45 @@ async def resolve_publish_source_file(
     return path
 
 
+async def resolve_post_image_source_url(
+    session: AsyncSession,
+    client_id: UUID,
+    photo_id: str,
+    *,
+    prefer_cdn: bool = False,
+) -> str | None:
+    """Public HTTPS URL Google can fetch for a GBP post image."""
+    photo_id = str(photo_id or "").strip()
+    if not photo_id:
+        return None
+
+    settings = get_settings()
+    row = (
+        await session.execute(
+            text(
+                """
+                SELECT external_source_url FROM rp_gbp_photos
+                WHERE id = :id AND client_id = :cid AND status IN ('ready', 'published')
+                """
+            ),
+            {"id": photo_id, "cid": str(client_id)},
+        )
+    ).mappings().first()
+    ext_url = str(row.get("external_source_url") or "").strip() if row else ""
+    if _is_public_https_url(ext_url):
+        return ext_url
+
+    if not prefer_cdn and _google_can_fetch_publish_url(settings):
+        return build_photo_publish_source_url(photo_id, client_id, settings)
+
+    try:
+        path = await get_photo_file_path(session, client_id, photo_id)
+        return await _dev_public_url_for_local_file(path)
+    except HTTPException as exc:
+        logger.warning("Post image CDN fallback failed for %s: %s", photo_id, exc.detail)
+        return None
+
+
 async def get_photo_file_path(session: AsyncSession, client_id: UUID, photo_id: str) -> Path:
     await _ensure_photos_table(session)
     row = (

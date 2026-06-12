@@ -101,17 +101,28 @@ class TabErrorBoundary extends Component<
 }
 
 function statusBadge(status: string) {
-  const tones: Record<string, "green" | "amber" | "red" | "teal" | "blue"> = {
-    pending: "amber",
-    approved: "green",
-    published: "green",
+  const tones: Record<string, "pending" | "published" | "green" | "amber" | "red" | "teal" | "blue"> = {
+    pending: "pending",
+    approved: "blue",
+    published: "published",
     rejected: "red",
     removed_on_gbp: "red",
     archived: "teal",
     scheduled: "blue",
     draft: "blue",
   };
-  return <Badge tone={tones[status] ?? "blue"}>{status.replace(/_/g, " ")}</Badge>;
+  const labels: Record<string, string> = {
+    pending: "Pending",
+    approved: "Approved",
+    published: "Published",
+    rejected: "Rejected",
+    removed_on_gbp: "Removed on GBP",
+    archived: "Archived",
+    scheduled: "Scheduled",
+    draft: "Draft",
+  };
+  const label = labels[status] ?? status.replace(/_/g, " ");
+  return <Badge tone={tones[status] ?? "blue"}>{label}</Badge>;
 }
 
 function formatGbpHistoryDate(iso?: string) {

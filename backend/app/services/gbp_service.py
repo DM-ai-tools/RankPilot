@@ -2145,24 +2145,25 @@ async def publish_gbp_queue_post(
 
     from app.routes.v1.integrations import _get_google_access_token
     from app.services.gbp_photos_service import (
-        _google_can_fetch_publish_url,
         _resolve_v4_media_parent,
-        build_photo_publish_source_url,
+        resolve_post_image_source_url,
     )
 
-    settings = get_settings()
     token = await _get_google_access_token(session, client_id, "gbp")
-    media_url = None
     photo_id = str(payload.get("photo_id") or "").strip()
-    if photo_id and _google_can_fetch_publish_url(settings):
-        media_url = build_photo_publish_source_url(photo_id, client_id, settings)
+    media_url = (
+        await resolve_post_image_source_url(session, client_id, photo_id)
+        if photo_id
+        else None
+    )
     note = (
         "Published to your Google Business Profile"
         + (" with image." if media_url else " (text only).")
     )
     if photo_id and not media_url:
         note = (
-            "Published (text only). Image not sent — set PUBLIC_API_BASE_URL for Google to fetch photos."
+            "Published (text only). Image not sent — photo missing or could not be hosted for Google. "
+            "Add FREEIMAGE_API_KEY or IMGBB_API_KEY to backend/.env, or set PUBLIC_API_BASE_URL."
         )
 
     v4_parent = await _resolve_v4_media_parent(token, intg["location_name"])
@@ -2170,12 +2171,32 @@ async def publish_gbp_queue_post(
         gbp_post_name = await _publish_local_post_to_google(token, v4_parent, post_body, media_url)
     except HTTPException as exc:
         if media_url and exc.status_code in (400, 502):
-            logger.warning("GBP post with image failed (%s), retrying text-only", exc.detail)
-            gbp_post_name = await _publish_local_post_to_google(token, v4_parent, post_body, None)
-            note = (
-                "Published to Google (text only). Image was skipped — Google could not fetch the photo URL. "
-                "Set PUBLIC_API_BASE_URL to a live https tunnel, or publish without the image."
+            logger.warning("GBP post with image failed (%s), trying CDN fallback", exc.detail)
+            cdn_url = await resolve_post_image_source_url(
+                session, client_id, photo_id, prefer_cdn=True
             )
+            if cdn_url and cdn_url != media_url:
+                try:
+                    gbp_post_name = await _publish_local_post_to_google(
+                        token, v4_parent, post_body, cdn_url
+                    )
+                    note = "Published to Google Business Profile with image (CDN fallback)."
+                except HTTPException:
+                    logger.warning("GBP post CDN image also failed, retrying text-only")
+                    gbp_post_name = await _publish_local_post_to_google(
+                        token, v4_parent, post_body, None
+                    )
+                    note = (
+                        "Published to Google (text only). Image was skipped — Google could not fetch the photo. "
+                        "Check FREEIMAGE_API_KEY / PUBLIC_API_BASE_URL in backend/.env."
+                    )
+            else:
+                logger.warning("GBP post with image failed (%s), retrying text-only", exc.detail)
+                gbp_post_name = await _publish_local_post_to_google(token, v4_parent, post_body, None)
+                note = (
+                    "Published to Google (text only). Image was skipped — Google could not fetch the photo URL. "
+                    "Set PUBLIC_API_BASE_URL to a live https tunnel, or add FREEIMAGE_API_KEY."
+                )
         else:
             raise
     was_removed = bool(payload.get("removed_on_gbp_at"))

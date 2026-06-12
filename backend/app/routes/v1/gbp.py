@@ -26,11 +26,13 @@ from app.services.gbp_brand_kit_service import (
     upload_brand_logo,
 )
 from app.services.gbp_photos_service import (
+    _mime_for_path,
     delete_gbp_photo,
     generate_gbp_photo,
     get_photo_file_path,
     list_gbp_photos,
     publish_gbp_photo,
+    resolve_publish_source_file,
     upload_gbp_photo,
 )
 from app.services.gbp_service import (
@@ -320,17 +322,30 @@ async def api_list_gbp_photos(client_id: CurrentClientId, session: DbSession) ->
 async def api_get_photo_file(
     photo_id: str,
     client_id: TokenClientId,
+    session: DbSession,
 ) -> FileResponse:
-    """Serve photo file directly — no DB session needed, supports ?token= for img tags."""
-    import pathlib
-    from fastapi import HTTPException
+    """Serve photo file — supports ?token= for browser img tags."""
+    path = await get_photo_file_path(session, client_id, photo_id)
+    return FileResponse(str(path), media_type=_mime_for_path(path))
 
-    base = pathlib.Path("uploads/gbp") / str(client_id)
-    for ext in (".png", ".jpg", ".jpeg", ".webp", ".gif"):
-        p = base / f"{photo_id}{ext}"
-        if p.exists():
-            return FileResponse(str(p))
-    raise HTTPException(status_code=404, detail="Photo file not found")
+
+@router.get("/photos/{photo_id}/publish-source")
+async def api_photo_publish_source(
+    photo_id: str,
+    cid: UUID = Query(..., description="Client id (signed URL)"),
+    exp: int = Query(..., description="Expiry unix timestamp"),
+    sig: str = Query(..., description="HMAC signature"),
+) -> FileResponse:
+    """Public signed URL — Google fetches post images (no JWT; HMAC verified)."""
+    from app.db.session import session_maker
+
+    async with session_maker()() as session:
+        path = await resolve_publish_source_file(session, photo_id, str(cid), exp, sig)
+    return FileResponse(
+        str(path),
+        media_type=_mime_for_path(path),
+        headers={"Cache-Control": "private, max-age=300"},
+    )
 
 
 @router.post("/photos/upload")

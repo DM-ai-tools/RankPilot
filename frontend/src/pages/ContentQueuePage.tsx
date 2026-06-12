@@ -40,10 +40,10 @@ const TYPE_ICON: Record<string, ComponentType<{ className?: string }>> = {
   schema: Wrench,
 };
 
-const STATUS_TONE: Record<string, "amber" | "green" | "teal" | "red" | "blue"> = {
-  pending:   "amber",
-  approved:  "green",
-  published: "teal",
+const STATUS_TONE: Record<string, "pending" | "published" | "green" | "teal" | "red" | "blue"> = {
+  pending:   "pending",
+  approved:  "blue",
+  published: "published",
   rejected:  "red",
 };
 
