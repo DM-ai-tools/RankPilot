@@ -37,6 +37,10 @@ _MAPS_TIMEOUT_SEC = 45.0       # live Maps API can hang — cap wait time
 _STALENESS_HOURS = 6           # skip re-check if snapshot < 6h old
 _tables_ready = False
 
+_KEYWORD_MAX_WORDS = 8         # keywords longer than this are likely sentences
+_KEYWORD_MAX_CHARS = 80        # hard cap on keyword character length
+_SENTENCE_PUNCT = re.compile(r"[.!?]{1}")  # sentence-ending punctuation
+
 
 async def _ensure_tracker_tables() -> None:
     """Create tracker tables if startup bootstrap failed (e.g. old index DDL)."""
@@ -50,6 +54,20 @@ async def _ensure_tracker_tables() -> None:
 
 
 # ── helpers ──────────────────────────────────────────────────────────────────
+
+def _is_valid_keyword(kw: str) -> bool:
+    """Return False for sentence fragments, URLs, or anything too long to be a real keyword."""
+    kw = kw.strip()
+    if not kw:
+        return False
+    if len(kw) > _KEYWORD_MAX_CHARS:
+        return False
+    if len(kw.split()) > _KEYWORD_MAX_WORDS:
+        return False
+    if _SENTENCE_PUNCT.search(kw):
+        return False
+    return True
+
 
 def _normalize_domain(url: str) -> str:
     raw = (url or "").strip()
@@ -383,6 +401,24 @@ async def sync_tracked_keywords(
 ) -> int:
     """Import keywords from GBP posts, return count of newly added rows."""
     await _ensure_tracker_tables()
+
+    # Purge any previously-imported sentence fragments (bad target_keyword values from old posts)
+    await session.execute(
+        text(
+            """
+            DELETE FROM rp_keyword_tracker
+            WHERE client_id = :cid
+              AND source IN ('gbp_post', 'gbp_post_published')
+              AND (
+                LENGTH(keyword) > :max_chars
+                OR array_length(regexp_split_to_array(trim(keyword), '\\s+'), 1) > :max_words
+                OR keyword ~ '[.!?]'
+              )
+            """
+        ),
+        {"cid": str(client_id), "max_chars": _KEYWORD_MAX_CHARS, "max_words": _KEYWORD_MAX_WORDS},
+    )
+
     rows = (
         await session.execute(
             text(
@@ -405,7 +441,8 @@ async def sync_tracked_keywords(
     added = 0
     for r in rows:
         kw = str(r["kw"] or "").strip()
-        if not kw:
+        if not kw or not _is_valid_keyword(kw):
+            logger.debug("Skipping invalid keyword from post payload: %r", kw)
             continue
         source = "gbp_post_published" if r.get("is_published") else "gbp_post"
         result = await session.execute(
@@ -454,7 +491,7 @@ async def add_keyword(session: AsyncSession, client_id: UUID, keyword: str) -> b
     """Manually add a keyword to track. Returns True if newly added."""
     await _ensure_tracker_tables()
     kw = keyword.strip().lower()
-    if not kw:
+    if not kw or not _is_valid_keyword(kw):
         return False
     result = await session.execute(
         text(
@@ -541,6 +578,12 @@ async def run_rank_checks(
 
     ahrefs_cap = min(len(keywords), _MAX_FORCE_LIVE if force else _MAX_LIVE_CHECKS)
     maps_cap = _MAX_MAPS_CHECKS
+    settings = get_settings()
+    ahrefs_ok = bool(get_ahrefs_api_key())
+    dataforseo_ok = bool(
+        str(settings.dataforseo_login or "").strip()
+        and str(settings.dataforseo_password or "").strip()
+    )
 
     # Find which already have a fresh snapshot today
     today = datetime.now(UTC).date()
@@ -596,6 +639,7 @@ async def run_rank_checks(
                         snap_dict.get("organic_position") if snap_dict else None,
                         maps_pos or (snap_dict.get("maps_position") if snap_dict else None),
                         snap_dict.get("search_volume") if snap_dict else None,
+                        ahrefs_ok=ahrefs_ok, dataforseo_ok=dataforseo_ok,
                     ),
                 }
                 continue
@@ -659,20 +703,28 @@ async def run_rank_checks(
             "maps_position": maps_pos,
             "search_volume": volume,
             "from_cache": False,
-            "rank_note": _rank_note(organic_pos, maps_pos, volume),
+            "rank_note": _rank_note(organic_pos, maps_pos, volume,
+                                    ahrefs_ok=ahrefs_ok, dataforseo_ok=dataforseo_ok),
         }
 
     return results
 
 
 def _rank_note(
-    organic: int | None, maps: int | None, volume: int | None
+    organic: int | None, maps: int | None, volume: int | None,
+    *, ahrefs_ok: bool = True, dataforseo_ok: bool = True,
 ) -> str | None:
     if organic is not None or maps is not None:
         return None
     if volume is not None:
         return "Not in top 20 yet — volume tracked; keep posting to improve rank"
-    return "Rank check complete — no position data returned"
+    if not ahrefs_ok and not dataforseo_ok:
+        return "Rank data unavailable — add AHREFS_API_KEY and DataForSEO credentials in Railway env vars"
+    if not ahrefs_ok:
+        return "Organic rank unavailable — add AHREFS_API_KEY to Railway env vars"
+    if not dataforseo_ok:
+        return "Maps rank unavailable — add DATAFORSEO_LOGIN / DATAFORSEO_PASSWORD to Railway env vars"
+    return "Rank check complete — keyword not found in top positions yet"
 
 
 async def get_keyword_tracker_list(
