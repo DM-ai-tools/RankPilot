@@ -2123,6 +2123,7 @@ export function GbpPage() {
   });
 
   const [generatePostNote, setGeneratePostNote] = useState<string | null>(null);
+  const [publishPostNote, setPublishPostNote] = useState<string | null>(null);
 
   const generatePost = useMutation({
     mutationFn: ({ count, prompts }: { count: number; prompts: string }) =>
@@ -2161,7 +2162,9 @@ export function GbpPage() {
   const publishPost = useMutation({
     mutationFn: ({ id, body }: { id: string; body: string }) =>
       updateGbpPost(id, { status: "published", body }),
-    onSuccess: () => {
+    onSuccess: (data) => {
+      const note = typeof data.note === "string" ? data.note : null;
+      setPublishPostNote(note);
       void qc.invalidateQueries({ queryKey: ["gbp"] });
       void qc.invalidateQueries({ queryKey: ["keyword-tracker"] });
     },
@@ -2428,7 +2431,15 @@ export function GbpPage() {
           <p className="mt-3 text-sm text-[#137333]">Post approved for schedule.</p>
         )}
         {publishPost.isSuccess && tab === "posts" && (
-          <p className="mt-3 text-sm text-[#137333]">Post sent to Google Business Profile.</p>
+          <p
+            className={`mt-3 text-sm ${
+              publishPostNote && /text only|image was skipped|image not sent/i.test(publishPostNote)
+                ? "text-amber-700"
+                : "text-[#137333]"
+            }`}
+          >
+            {publishPostNote ?? "Post sent to Google Business Profile."}
+          </p>
         )}
         {generatePostNote && tab === "posts" && (
           <p className="mt-3 text-sm text-[#137333]">{generatePostNote}</p>

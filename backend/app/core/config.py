@@ -136,7 +136,11 @@ class Settings(BaseSettings):
     # Public URL Google can reach to fetch GBP photos (sourceUrl). Defaults to google_redirect_base_url.
     public_api_base_url: str = Field(
         default="",
-        validation_alias=AliasChoices("PUBLIC_API_BASE_URL", "RANKPILOT_PUBLIC_API_URL"),
+        validation_alias=AliasChoices(
+            "PUBLIC_API_BASE_URL",
+            "RANKPILOT_PUBLIC_API_URL",
+            "RAILWAY_PUBLIC_DOMAIN",
+        ),
     )
     # Optional: host GBP photos for Google sourceUrl when running on localhost (free at imgbb.com / freeimage.host)
     imgbb_api_key: str = Field(default="", validation_alias=AliasChoices("IMGBB_API_KEY",))

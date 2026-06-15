@@ -103,6 +103,8 @@ def _public_api_base(settings: Settings | None = None) -> str:
     s = settings or get_settings()
     explicit = (s.public_api_base_url or "").strip()
     if explicit:
+        if not explicit.lower().startswith("http"):
+            explicit = f"https://{explicit}"
         return explicit.rstrip("/")
     base = (s.google_redirect_base_url or "http://localhost:8000").strip().rstrip("/")
     callback = "/api/v1/integrations/google/callback"
@@ -228,6 +230,53 @@ async def list_gbp_photos(session: AsyncSession, client_id: UUID) -> list[dict]:
     return out
 
 
+async def _get_photo_row(
+    session: AsyncSession,
+    client_id: UUID | str,
+    photo_id: str,
+) -> dict:
+    await _ensure_photos_table(session)
+    row = (
+        await session.execute(
+            text(
+                """
+                SELECT storage_path, external_source_url, status
+                FROM rp_gbp_photos
+                WHERE id = :id AND client_id = :cid
+                  AND status IN ('ready', 'published')
+                """
+            ),
+            {"id": photo_id, "cid": str(client_id)},
+        )
+    ).mappings().first()
+    if not row:
+        raise HTTPException(status_code=404, detail="Photo not found")
+    return dict(row)
+
+
+async def _materialize_photo_path(row: dict) -> Path:
+    """Return on-disk photo path, re-downloading from Runway/CDN when the local copy is gone."""
+    path = Path(str(row["storage_path"]))
+    if path.is_file():
+        cached = _gbp_publish_cache_path(path)
+        if cached.is_file():
+            return cached
+        return path
+    ext = str(row.get("external_source_url") or "").strip()
+    if ext.startswith("http://") or ext.startswith("https://"):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            async with httpx.AsyncClient(timeout=90.0, follow_redirects=True) as http:
+                resp = await http.get(ext)
+                if resp.is_success and resp.content:
+                    path.write_bytes(resp.content)
+                    logger.info("Re-downloaded GBP photo from CDN (%d bytes)", len(resp.content))
+                    return path
+        except Exception:
+            logger.warning("Could not re-download GBP photo from %s", ext, exc_info=True)
+    raise HTTPException(status_code=404, detail="Photo file missing on server")
+
+
 async def resolve_publish_source_file(
     session: AsyncSession,
     photo_id: str,
@@ -242,34 +291,8 @@ async def resolve_publish_source_file(
         text("SELECT set_config('app.client_id', :cid, true)"),
         {"cid": client_id},
     )
-    await _ensure_photos_table(session)
-    row = (
-        await session.execute(
-            text(
-                """
-                SELECT storage_path, external_source_url FROM rp_gbp_photos
-                WHERE id = :id AND client_id = :cid
-                  AND status IN ('ready', 'published')
-                """
-            ),
-            {"id": photo_id, "cid": client_id},
-        )
-    ).mappings().first()
-    if not row:
-        raise HTTPException(status_code=404, detail="Photo not found")
-    path = Path(str(row["storage_path"]))
-    if path.is_file():
-        cached = _gbp_publish_cache_path(path)
-        if cached.is_file():
-            return cached
-        return path
-    ext = str(row.get("external_source_url") or "").strip()
-    if ext.startswith("http://") or ext.startswith("https://"):
-        raise HTTPException(
-            status_code=404,
-            detail="Photo file missing on server — re-generate or upload the image",
-        )
-    raise HTTPException(status_code=404, detail="Photo file missing on server")
+    row = await _get_photo_row(session, client_id, photo_id)
+    return await _materialize_photo_path(row)
 
 
 async def resolve_post_image_source_url(
@@ -285,29 +308,34 @@ async def resolve_post_image_source_url(
         return None
 
     settings = get_settings()
-    row = (
-        await session.execute(
-            text(
-                """
-                SELECT external_source_url FROM rp_gbp_photos
-                WHERE id = :id AND client_id = :cid AND status IN ('ready', 'published')
-                """
-            ),
-            {"id": photo_id, "cid": str(client_id)},
-        )
-    ).mappings().first()
-    ext_url = str(row.get("external_source_url") or "").strip() if row else ""
+    try:
+        row = await _get_photo_row(session, client_id, photo_id)
+    except HTTPException:
+        return None
+    ext_url = str(row.get("external_source_url") or "").strip()
+
+    if prefer_cdn:
+        if _is_public_https_url(ext_url):
+            return ext_url
+        try:
+            materialized = await _materialize_photo_path(row)
+            return await _dev_public_url_for_local_file(materialized)
+        except HTTPException as exc:
+            logger.warning("Post image CDN fallback failed for %s: %s", photo_id, exc.detail)
+            return None
+
+    # Prefer our signed API URL on Railway/production — stable and serves our copy of the image.
+    if _google_can_fetch_publish_url(settings):
+        return build_photo_publish_source_url(photo_id, client_id, settings)
+
     if _is_public_https_url(ext_url):
         return ext_url
 
-    if not prefer_cdn and _google_can_fetch_publish_url(settings):
-        return build_photo_publish_source_url(photo_id, client_id, settings)
-
     try:
-        path = await get_photo_file_path(session, client_id, photo_id)
-        return await _dev_public_url_for_local_file(path)
+        materialized = await _materialize_photo_path(row)
+        return await _dev_public_url_for_local_file(materialized)
     except HTTPException as exc:
-        logger.warning("Post image CDN fallback failed for %s: %s", photo_id, exc.detail)
+        logger.warning("Post image host failed for %s: %s", photo_id, exc.detail)
         return None
 
 
@@ -339,12 +367,8 @@ async def resolve_photo_file(
 
 
 async def get_photo_file_path(session: AsyncSession, client_id: UUID, photo_id: str) -> Path:
-    path, ext = await resolve_photo_file(session, client_id, photo_id)
-    if path is not None:
-        return path
-    if ext:
-        raise HTTPException(status_code=404, detail="Photo file missing on server")
-    raise HTTPException(status_code=404, detail="Photo not found")
+    row = await _get_photo_row(session, client_id, photo_id)
+    return await _materialize_photo_path(row)
 
 
 async def upload_gbp_photo(
@@ -940,9 +964,10 @@ async def publish_gbp_photo(session: AsyncSession, client_id: UUID, photo_id: st
     if not intg:
         raise HTTPException(status_code=400, detail="Connect GBP and select a location first.")
 
-    file_path = Path(str(row.get("storage_path") or ""))
-    if not file_path.is_file():
-        raise HTTPException(status_code=404, detail="Photo file missing on server")
+    try:
+        file_path = await _materialize_photo_path(dict(row))
+    except HTTPException as exc:
+        raise HTTPException(status_code=404, detail=str(exc.detail)) from exc
 
     from app.routes.v1.integrations import _get_google_access_token
 
