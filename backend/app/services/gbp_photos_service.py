@@ -322,9 +322,9 @@ async def resolve_post_image_source_url(
     local_path = Path(str(row["storage_path"]))
 
     # 1. Use external CDN/Runway URL if it's a valid public HTTPS URL.
-    #    For freshly generated images this is always valid (Runway CDN).
-    #    This is the most Railway-safe option (no ephemeral disk dependency).
-    if _is_public_https_url(ext_url):
+    #    Skip tmpfiles.org — those expire in 1 hour and will cause broken images.
+    #    Runway URLs last ~24 h; imgbb/freeimage are permanent.
+    if _is_public_https_url(ext_url) and "tmpfiles.org" not in ext_url:
         return ext_url
 
     # 2. Signed API URL — only when the file actually exists on this instance's disk.
@@ -374,7 +374,8 @@ async def resolve_photo_file(
     if path.is_file():
         return path, None
     ext = str(row.get("external_source_url") or "").strip()
-    if ext.startswith("https://") or ext.startswith("http://"):
+    # Skip tmpfiles.org redirects — they expire in 1 hour and cause broken previews.
+    if (ext.startswith("https://") or ext.startswith("http://")) and "tmpfiles.org" not in ext:
         return None, ext
     raise HTTPException(status_code=404, detail="Photo file unavailable — re-generate the image")
 
@@ -591,28 +592,26 @@ async def generate_post_image_from_content(
 
     runway_url = str(urls[0]).strip()
 
-    # Try to upload the branded image to a permanent CDN now so that
-    # Railway's ephemeral disk loss doesn't break future post publishes.
+    # If a permanent CDN key is configured, upload now so the URL never expires.
+    # Do NOT use tmpfiles here — it expires in 1 hour and would break previews.
+    # Runway URLs last ~24 h which is enough for same-day publishes without a key.
     cdn_url: str | None = None
     s = get_settings()
     _freeimage_key = (s.freeimage_api_key or "").strip()
     _imgbb_key = (s.imgbb_api_key or "").strip()
-    if dest.is_file():
+    if dest.is_file() and (_freeimage_key or _imgbb_key):
         try:
-            mime = _mime_for_path(dest)
             data = dest.read_bytes()
-            async with httpx.AsyncClient(timeout=90.0, follow_redirects=True) as _http:
+            async with httpx.AsyncClient(timeout=60.0, follow_redirects=True) as _http:
                 if _freeimage_key:
                     cdn_url = await _upload_freeimage(_http, data, _freeimage_key)
                 if not cdn_url and _imgbb_key:
                     cdn_url = await _upload_imgbb(_http, data, _imgbb_key)
-                if not cdn_url:
-                    cdn_url = await _upload_tmpfiles(_http, dest, data, mime)
         except Exception:
-            logger.warning("Could not upload post image to CDN at generation time", exc_info=True)
+            logger.warning("Could not upload post image to permanent CDN", exc_info=True)
 
-    # Use CDN URL if we got one (permanent or at least hour-long URL),
-    # otherwise fall back to Runway URL (valid for ~24h after generation).
+    # Prefer permanent CDN URL, fall back to Runway URL (~24 h expiry).
+    # Never store tmpfiles URLs — they expire in 1 hour.
     ext_url_to_store = cdn_url or runway_url or None
 
     await session.execute(
