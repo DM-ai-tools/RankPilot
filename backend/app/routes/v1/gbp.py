@@ -97,6 +97,9 @@ class UpdatePostReq(BaseModel):
     status: str | None = None
     body: str | None = None
     scheduled_for: str | None = None
+    cta_button_type: str | None = None
+    cta_button_url: str | None = None
+    cta_button_phone: str | None = None
 
 
 class ScheduleAllReq(BaseModel):
@@ -107,6 +110,9 @@ class ScheduleAllReq(BaseModel):
 
 class PublishPostReq(BaseModel):
     body: str | None = None
+    cta_button_type: str | None = None   # BOOK | ORDER | SHOP | LEARN_MORE | SIGN_UP | CALL
+    cta_button_url: str | None = None    # for all types except CALL
+    cta_button_phone: str | None = None  # for CALL type
 
 
 class GeneratePhotoReq(BaseModel):
@@ -233,8 +239,22 @@ async def api_update_gbp_post(
     client_id: CurrentClientId,
     session: DbSession,
 ) -> dict:
+    cta: dict | None = None
+    btn = (req.cta_button_type or "").strip().upper()
+    if btn and btn != "NONE":
+        cta = {"actionType": btn}
+        if btn == "CALL":
+            phone = (req.cta_button_phone or "").strip()
+            if phone:
+                cta["phoneNumber"] = phone
+        else:
+            url = (req.cta_button_url or "").strip()
+            if url:
+                cta["url"] = url if url.startswith("http") else f"https://{url}"
     return await update_gbp_post(
-        session, client_id, post_id, status=req.status, body=req.body, scheduled_for=req.scheduled_for
+        session, client_id, post_id,
+        status=req.status, body=req.body, scheduled_for=req.scheduled_for,
+        cta_button=cta,
     )
 
 
@@ -245,8 +265,20 @@ async def api_publish_gbp_post(
     client_id: CurrentClientId,
     session: DbSession,
 ) -> dict:
+    cta: dict | None = None
+    btn = (req.cta_button_type or "").strip().upper()
+    if btn and btn != "NONE":
+        cta = {"actionType": btn}
+        if btn == "CALL":
+            phone = (req.cta_button_phone or "").strip()
+            if phone:
+                cta["phoneNumber"] = phone
+        else:
+            url = (req.cta_button_url or "").strip()
+            if url:
+                cta["url"] = url if url.startswith("http") else f"https://{url}"
     return await publish_gbp_queue_post(
-        session, client_id, post_id, post_body_override=req.body
+        session, client_id, post_id, post_body_override=req.body, cta_button=cta
     )
 
 

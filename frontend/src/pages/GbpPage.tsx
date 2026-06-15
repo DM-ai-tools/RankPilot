@@ -234,7 +234,7 @@ function PostsTab({
   token: string | null;
   onGenerate: (count: number, prompts: string) => void;
   onApprove: (id: string, body: string, scheduledFor?: string) => void;
-  onPublish: (id: string, body: string) => void;
+  onPublish: (id: string, body: string, cta?: { type: string; url?: string; phone?: string } | null) => void;
   onSaveDraft: (id: string, body: string) => void;
   onSyncPosts: () => void;
   onDeletePost: (id: string) => void;
@@ -263,6 +263,9 @@ function PostsTab({
   const [exportDateFrom, setExportDateFrom] = useState("");
   const [exportDateTo, setExportDateTo] = useState("");
   const [selectedExportIds, setSelectedExportIds] = useState<string[]>([]);
+  const [ctaType, setCtaType] = useState("NONE");
+  const [ctaUrl, setCtaUrl] = useState("https://clicktrends.com.au/contact-us/");
+  const [ctaPhone, setCtaPhone] = useState("+61370209120");
 
   const todayStr = new Date().toISOString().slice(0, 10);
   const allPosts = asArray<GbpQueueItem>(d.posts);
@@ -782,6 +785,55 @@ function PostsTab({
 
             {canAct && draft && (
               <div className="mt-3 space-y-2">
+                {/* CTA Button picker */}
+                <div className="rounded-lg border border-rp-border bg-rp-light px-3 py-2 space-y-2">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <label className="text-[11px] font-bold uppercase tracking-wide text-rp-tlight shrink-0">
+                      🔗 CTA Button
+                    </label>
+                    <select
+                      value={ctaType}
+                      onChange={(e) => setCtaType(e.target.value)}
+                      className="rounded-md border border-rp-border bg-white px-2 py-1 text-[12px] text-navy outline-none focus:ring-1 focus:ring-[#34A853]"
+                    >
+                      <option value="NONE">None</option>
+                      <option value="BOOK">Book</option>
+                      <option value="ORDER">Order online</option>
+                      <option value="SHOP">Buy</option>
+                      <option value="LEARN_MORE">Learn more</option>
+                      <option value="SIGN_UP">Sign up</option>
+                      <option value="CALL">Call now</option>
+                    </select>
+                    <span className="text-[11px] text-rp-tlight">
+                      Adds an action button to the GBP post
+                    </span>
+                  </div>
+                  {ctaType !== "NONE" && ctaType !== "CALL" && (
+                    <div className="flex items-center gap-2">
+                      <label className="text-[11px] text-rp-tlight shrink-0 w-10">URL</label>
+                      <input
+                        type="url"
+                        value={ctaUrl}
+                        onChange={(e) => setCtaUrl(e.target.value)}
+                        placeholder="https://example.com/contact"
+                        className="flex-1 rounded-md border border-rp-border bg-white px-2 py-1 text-[12px] text-navy outline-none focus:ring-1 focus:ring-[#34A853]"
+                      />
+                    </div>
+                  )}
+                  {ctaType === "CALL" && (
+                    <div className="flex items-center gap-2">
+                      <label className="text-[11px] text-rp-tlight shrink-0 w-10">Phone</label>
+                      <input
+                        type="tel"
+                        value={ctaPhone}
+                        onChange={(e) => setCtaPhone(e.target.value)}
+                        placeholder="+61370209120"
+                        className="flex-1 rounded-md border border-rp-border bg-white px-2 py-1 text-[12px] text-navy outline-none focus:ring-1 focus:ring-[#34A853]"
+                      />
+                    </div>
+                  )}
+                </div>
+
                 <div className="flex flex-wrap items-center gap-2 rounded-lg border border-rp-border bg-rp-light px-3 py-2">
                   <label className="text-[11px] font-bold uppercase tracking-wide text-rp-tlight">
                     📅 Publish date
@@ -811,9 +863,15 @@ function PostsTab({
                     size="sm"
                     variant="outline"
                     disabled={busy || overLimit || !editBody.trim()}
-                    onClick={() => onPublish(draft.id, editBody.trim())}
+                    onClick={() => {
+                      const cta = ctaType !== "NONE"
+                        ? { type: ctaType, url: ctaType !== "CALL" ? ctaUrl : undefined, phone: ctaType === "CALL" ? ctaPhone : undefined }
+                        : null;
+                      onPublish(draft.id, editBody.trim(), cta);
+                    }}
                   >
                     Publish to GBP now
+                    {ctaType !== "NONE" && <span className="ml-1 text-[10px] opacity-70">+ {ctaType === "CALL" ? "Call now" : ctaType === "LEARN_MORE" ? "Learn more" : ctaType === "SIGN_UP" ? "Sign up" : ctaType === "BOOK" ? "Book" : ctaType === "ORDER" ? "Order" : "Buy"} btn</span>}
                   </Button>
                   <Button
                     size="sm"
@@ -2166,8 +2224,14 @@ export function GbpPage() {
   });
 
   const publishPost = useMutation({
-    mutationFn: ({ id, body }: { id: string; body: string }) =>
-      updateGbpPost(id, { status: "published", body }),
+    mutationFn: ({ id, body, cta }: { id: string; body: string; cta?: { type: string; url?: string; phone?: string } | null }) =>
+      updateGbpPost(id, {
+        status: "published",
+        body,
+        cta_button_type: cta?.type ?? null,
+        cta_button_url: cta?.url ?? null,
+        cta_button_phone: cta?.phone ?? null,
+      }),
     onSuccess: (data) => {
       const note = typeof data.note === "string" ? data.note : null;
       setPublishPostNote(note);
@@ -2360,7 +2424,7 @@ export function GbpPage() {
                 onApprove={(id, body, scheduledFor) =>
                   void approvePost.mutate({ id, body, scheduledFor })
                 }
-                onPublish={(id, body) => void publishPost.mutate({ id, body })}
+                onPublish={(id, body, cta) => void publishPost.mutate({ id, body, cta })}
                 onSyncPosts={() => void syncPosts.mutate()}
                 onDeletePost={(id) => void deletePost.mutate(id)}
                 onScheduleAll={(mode, start, end) =>

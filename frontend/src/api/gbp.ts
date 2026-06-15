@@ -157,15 +157,27 @@ export const generateGbpPostDirections = (
 
 export const updateGbpPost = (
   id: string,
-  data: { status?: string; body?: string; scheduled_for?: string },
+  data: { status?: string; body?: string; scheduled_for?: string; cta_button_type?: string | null; cta_button_url?: string | null; cta_button_phone?: string | null },
 ): Promise<Record<string, unknown>> =>
   apiPatchJson(`/api/v1/gbp/posts/${id}`, data);
+
+export type CtaButton = {
+  type: string;       // BOOK | ORDER | SHOP | LEARN_MORE | SIGN_UP | CALL | NONE
+  url?: string;
+  phone?: string;
+};
 
 export const publishGbpPost = (
   id: string,
   body?: string,
+  cta?: CtaButton | null,
 ): Promise<Record<string, unknown>> =>
-  apiPostJson(`/api/v1/gbp/posts/${id}/publish`, { body });
+  apiPostJson(`/api/v1/gbp/posts/${id}/publish`, {
+    body,
+    cta_button_type: cta?.type ?? null,
+    cta_button_url: cta?.url ?? null,
+    cta_button_phone: cta?.phone ?? null,
+  });
 
 export const deleteGbpPost = (id: string): Promise<Record<string, unknown>> =>
   apiDelete(`/api/v1/gbp/posts/${id}`);

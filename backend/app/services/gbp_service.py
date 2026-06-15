@@ -2066,6 +2066,8 @@ async def _publish_local_post_to_google(
     v4_parent: str,
     summary: str,
     media_source_url: str | None = None,
+    *,
+    cta_button: dict | None = None,
 ) -> str:
     from app.routes.v1.integrations import _gbp_google_error_detail
 
@@ -2076,6 +2078,8 @@ async def _publish_local_post_to_google(
     }
     if media_source_url:
         body["media"] = [{"mediaFormat": "PHOTO", "sourceUrl": media_source_url}]
+    if cta_button and cta_button.get("actionType"):
+        body["callToAction"] = cta_button
     url = f"{GBP_V4_BASE}/{v4_parent}/localPosts"
     async with httpx.AsyncClient(timeout=60.0) as http:
         resp = await http.post(
@@ -2103,6 +2107,7 @@ async def publish_gbp_queue_post(
     *,
     post_body_override: str | None = None,
     payload_override: dict | None = None,
+    cta_button: dict | None = None,
 ) -> dict:
     """Push an approved GBP post (text + optional image) to Google."""
     payload = dict(payload_override or {})
@@ -2167,8 +2172,11 @@ async def publish_gbp_queue_post(
         )
 
     v4_parent = await _resolve_v4_media_parent(token, intg["location_name"])
+    _cta = cta_button  # shorthand for all calls below
     try:
-        gbp_post_name = await _publish_local_post_to_google(token, v4_parent, post_body, media_url)
+        gbp_post_name = await _publish_local_post_to_google(
+            token, v4_parent, post_body, media_url, cta_button=_cta
+        )
     except HTTPException as exc:
         if media_url and exc.status_code in (400, 502):
             logger.warning("GBP post with image failed (%s), trying CDN fallback", exc.detail)
@@ -2178,13 +2186,13 @@ async def publish_gbp_queue_post(
             if cdn_url and cdn_url != media_url:
                 try:
                     gbp_post_name = await _publish_local_post_to_google(
-                        token, v4_parent, post_body, cdn_url
+                        token, v4_parent, post_body, cdn_url, cta_button=_cta
                     )
                     note = "Published to Google Business Profile with image (CDN fallback)."
                 except HTTPException:
                     logger.warning("GBP post CDN image also failed, retrying text-only")
                     gbp_post_name = await _publish_local_post_to_google(
-                        token, v4_parent, post_body, None
+                        token, v4_parent, post_body, None, cta_button=_cta
                     )
                     note = (
                         "Published to Google (text only). Image was skipped — Google could not fetch the photo. "
@@ -2192,7 +2200,9 @@ async def publish_gbp_queue_post(
                     )
             else:
                 logger.warning("GBP post with image failed (%s), retrying text-only", exc.detail)
-                gbp_post_name = await _publish_local_post_to_google(token, v4_parent, post_body, None)
+                gbp_post_name = await _publish_local_post_to_google(
+                    token, v4_parent, post_body, None, cta_button=_cta
+                )
                 note = (
                     "Published to Google (text only). Image was skipped — Google could not fetch the photo URL. "
                     "Set PUBLIC_API_BASE_URL to a live https tunnel, or add FREEIMAGE_API_KEY."
@@ -2391,6 +2401,7 @@ async def update_gbp_post(
     status: str | None = None,
     body: str | None = None,
     scheduled_for: str | None = None,
+    cta_button: dict | None = None,
 ) -> dict:
     if status is None and body is None and scheduled_for is None:
         raise HTTPException(status_code=400, detail="Provide body, status, and/or scheduled_for to update")
@@ -2475,6 +2486,7 @@ async def update_gbp_post(
             post_id,
             post_body_override=post_body,
             payload_override=payload,
+            cta_button=cta_button,
         )
 
     final_status = status
