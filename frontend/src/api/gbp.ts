@@ -179,6 +179,16 @@ export const publishGbpPost = (
     cta_button_phone: cta?.phone ?? null,
   });
 
+export const updateGbpPostCta = (
+  id: string,
+  cta: CtaButton,
+): Promise<Record<string, unknown>> =>
+  apiPostJson(`/api/v1/gbp/posts/${id}/update-cta`, {
+    cta_button_type: cta.type,
+    cta_button_url: cta.url ?? null,
+    cta_button_phone: cta.phone ?? null,
+  });
+
 export const deleteGbpPost = (id: string): Promise<Record<string, unknown>> =>
   apiDelete(`/api/v1/gbp/posts/${id}`);
 

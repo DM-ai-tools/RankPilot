@@ -48,6 +48,7 @@ from app.services.gbp_service import (
     update_description_status,
     update_gbp_description,
     update_gbp_post,
+    update_gbp_post_cta,
 )
 
 router = APIRouter()
@@ -280,6 +281,29 @@ async def api_publish_gbp_post(
     return await publish_gbp_queue_post(
         session, client_id, post_id, post_body_override=req.body, cta_button=cta
     )
+
+
+@router.post("/posts/{post_id}/update-cta")
+async def api_update_gbp_post_cta(
+    post_id: str,
+    req: PublishPostReq,
+    client_id: CurrentClientId,
+    session: DbSession,
+) -> dict:
+    """PATCH a live GBP post to add/change its CTA button without re-publishing."""
+    btn = (req.cta_button_type or "").strip().upper()
+    if not btn or btn == "NONE":
+        raise HTTPException(status_code=400, detail="Select a CTA button type")
+    cta: dict = {"actionType": btn}
+    if btn == "CALL":
+        phone = (req.cta_button_phone or "").strip()
+        if phone:
+            cta["phoneNumber"] = phone
+    else:
+        url = (req.cta_button_url or "").strip()
+        if url:
+            cta["url"] = url if url.startswith("http") else f"https://{url}"
+    return await update_gbp_post_cta(session, client_id, post_id, cta)
 
 
 @router.delete("/posts/{post_id}")

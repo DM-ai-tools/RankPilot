@@ -2251,6 +2251,77 @@ async def publish_gbp_queue_post(
     }
 
 
+async def update_gbp_post_cta(
+    session: AsyncSession,
+    client_id: UUID,
+    post_id: str,
+    cta_button: dict,
+) -> dict:
+    """PATCH an already-live GBP post to add or change its callToAction button."""
+    intg = await _gbp_integration(session, client_id)
+    if not intg:
+        raise HTTPException(
+            status_code=400,
+            detail="GBP is not fully set up. Connect Google Business Profile in onboarding.",
+        )
+
+    row = (
+        await session.execute(
+            text(
+                """
+                SELECT payload FROM rp_content_queue
+                WHERE id = :id AND client_id = :cid
+                  AND content_type = 'gbp_post' AND status = 'published'
+                """
+            ),
+            {"id": post_id, "cid": str(client_id)},
+        )
+    ).mappings().first()
+    if not row:
+        raise HTTPException(status_code=404, detail="Published post not found")
+
+    payload = row["payload"] if isinstance(row["payload"], dict) else {}
+    if isinstance(row["payload"], str):
+        try:
+            payload = json.loads(row["payload"])
+        except Exception:
+            payload = {}
+
+    gbp_post_name = str(payload.get("gbp_local_post_name") or "").strip()
+    if not gbp_post_name:
+        raise HTTPException(
+            status_code=400,
+            detail="No GBP post name on record — post may have been published before this version. Re-publish to update.",
+        )
+
+    from app.routes.v1.integrations import _get_google_access_token
+    token = await _get_google_access_token(session, client_id, "gbp")
+
+    patch_body: dict[str, Any] = {"callToAction": cta_button}
+    patch_url = f"{GBP_V4_BASE}/{gbp_post_name}"
+    async with httpx.AsyncClient(timeout=30.0) as http:
+        resp = await http.patch(
+            patch_url,
+            params={"updateMask": "callToAction"},
+            headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
+            json=patch_body,
+        )
+    if not resp.is_success:
+        msg = ""
+        with contextlib.suppress(Exception):
+            msg = str(resp.json().get("error", {}).get("message") or resp.json())
+        raise HTTPException(
+            status_code=resp.status_code if resp.status_code < 500 else 502,
+            detail=f"Google rejected the CTA update: {msg or resp.text[:200]}",
+        )
+
+    action_label = {
+        "BOOK": "Book", "ORDER": "Order online", "SHOP": "Buy",
+        "LEARN_MORE": "Learn more", "SIGN_UP": "Sign up", "CALL": "Call now",
+    }.get(cta_button.get("actionType", ""), cta_button.get("actionType", ""))
+    return {"note": f"CTA button '{action_label}' added to your live GBP post."}
+
+
 GBP_DRIP_CADENCE_DAYS = 1
 
 

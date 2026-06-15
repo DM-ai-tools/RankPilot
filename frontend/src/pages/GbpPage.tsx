@@ -38,6 +38,7 @@ import {
   syncGbpPosts,
   updateGbpDescription,
   updateGbpPost,
+  updateGbpPostCta,
   uploadGbpBrandLogo,
   uploadGbpPhoto,
   gbpListingDescription,
@@ -210,6 +211,85 @@ function OverviewTab({ d }: { d: GbpOverview }) {
     </div>
   );
 }
+
+// ── Published post CTA updater ────────────────────────────────────────────────
+function PublishedPostCtaUpdater({ postId }: { postId: string }) {
+  const qc = useQueryClient();
+  const [ctaType, setCtaType] = useState("LEARN_MORE");
+  const [ctaUrl, setCtaUrl] = useState("https://clicktrends.com.au/contact-us/");
+  const [ctaPhone, setCtaPhone] = useState("+61370209120");
+  const [note, setNote] = useState<string | null>(null);
+
+  const update = useMutation({
+    mutationFn: () => updateGbpPostCta(postId, {
+      type: ctaType,
+      url: ctaType !== "CALL" ? ctaUrl : undefined,
+      phone: ctaType === "CALL" ? ctaPhone : undefined,
+    }),
+    onSuccess: (data) => {
+      setNote(typeof data.note === "string" ? data.note : "CTA updated on Google.");
+      void qc.invalidateQueries({ queryKey: ["gbp"] });
+    },
+  });
+
+  const CTA_LABELS: Record<string, string> = {
+    BOOK: "Book", ORDER: "Order online", SHOP: "Buy",
+    LEARN_MORE: "Learn more", SIGN_UP: "Sign up", CALL: "Call now",
+  };
+
+  return (
+    <div className="mt-3 space-y-2 rounded-lg border border-rp-border bg-rp-light p-3">
+      <p className="text-[12px] text-rp-tlight">
+        This post is live on Google.{" "}
+        <span className="font-medium text-navy">Add or change its CTA button without re-publishing:</span>
+      </p>
+      <div className="flex flex-wrap items-center gap-2">
+        <select
+          value={ctaType}
+          onChange={(e) => setCtaType(e.target.value)}
+          className="rounded-md border border-rp-border bg-white px-2 py-1 text-[12px] text-navy outline-none focus:ring-1 focus:ring-[#34A853]"
+        >
+          {Object.entries(CTA_LABELS).map(([v, l]) => (
+            <option key={v} value={v}>{l}</option>
+          ))}
+        </select>
+        {ctaType !== "CALL" ? (
+          <input
+            type="url"
+            value={ctaUrl}
+            onChange={(e) => setCtaUrl(e.target.value)}
+            className="flex-1 min-w-[180px] rounded-md border border-rp-border bg-white px-2 py-1 text-[12px] text-navy outline-none focus:ring-1 focus:ring-[#34A853]"
+            placeholder="https://example.com"
+          />
+        ) : (
+          <input
+            type="tel"
+            value={ctaPhone}
+            onChange={(e) => setCtaPhone(e.target.value)}
+            className="flex-1 min-w-[140px] rounded-md border border-rp-border bg-white px-2 py-1 text-[12px] text-navy outline-none focus:ring-1 focus:ring-[#34A853]"
+            placeholder="+61370209120"
+          />
+        )}
+        <Button
+          size="sm"
+          disabled={update.isPending}
+          onClick={() => update.mutate()}
+        >
+          {update.isPending ? "Updating…" : `Add "${CTA_LABELS[ctaType]}" button`}
+        </Button>
+      </div>
+      {note && (
+        <p className="text-[11px] text-[#34A853] font-medium">{note}</p>
+      )}
+      {update.isError && (
+        <p className="text-[11px] text-red-600">
+          {(update.error as Error)?.message ?? "Failed to update CTA on Google"}
+        </p>
+      )}
+    </div>
+  );
+}
+
 
 // ── Posts Tab ─────────────────────────────────────────────────────────────────
 
@@ -895,9 +975,7 @@ function PostsTab({
               </div>
             )}
             {isAlreadyPublished && draft && (
-              <p className="mt-3 text-[12px] text-rp-tlight">
-                This post is already live on Google. To change it, generate a new post or edit a draft.
-              </p>
+              <PublishedPostCtaUpdater postId={draft.id} />
             )}
             {draft && !isCurrentDraft && (
               <button
