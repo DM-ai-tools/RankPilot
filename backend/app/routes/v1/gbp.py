@@ -323,8 +323,10 @@ async def api_get_photo_file(
     photo_id: str,
     client_id: TokenClientId,
 ):
-    """Serve photo file — supports ?token= for browser img tags (no DbSession — Bearer-only dep breaks <img>)."""
-    from fastapi.responses import RedirectResponse
+    """Serve photo file — supports ?token= for browser img tags (no DbSession — Bearer-only dep breaks <img>).
+
+    Re-downloads from CDN when Railway's ephemeral disk is empty so previews always work.
+    """
     from sqlalchemy import text
 
     from app.db.session import session_maker
@@ -334,9 +336,7 @@ async def api_get_photo_file(
             text("SELECT set_config('app.client_id', :cid, true)"),
             {"cid": str(client_id)},
         )
-        path, redirect = await resolve_photo_file(session, client_id, photo_id)
-    if redirect:
-        return RedirectResponse(redirect, status_code=302)
+        path, _ = await resolve_photo_file(session, client_id, photo_id)
     return FileResponse(str(path), media_type=_mime_for_path(path))
 
 

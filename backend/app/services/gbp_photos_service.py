@@ -350,8 +350,12 @@ async def resolve_post_image_source_url(
 
 async def resolve_photo_file(
     session: AsyncSession, client_id: UUID, photo_id: str
-) -> tuple[Path | None, str | None]:
-    """Local file path, or external Runway/CDN URL when the on-disk copy is missing."""
+) -> tuple[Path, None]:
+    """Return a local file path for serving — re-downloads from CDN when the disk copy is missing.
+
+    On Railway (ephemeral filesystem) files are wiped on every deploy. We always try to
+    re-materialise from the stored Runway/CDN URL so previews keep working.
+    """
     await _ensure_photos_table(session)
     row = (
         await session.execute(
@@ -366,13 +370,9 @@ async def resolve_photo_file(
     ).mappings().first()
     if not row:
         raise HTTPException(status_code=404, detail="Photo not found")
-    path = Path(str(row["storage_path"]))
-    if path.is_file():
-        return path, None
-    ext = str(row.get("external_source_url") or "").strip()
-    if ext.startswith("http://") or ext.startswith("https://"):
-        return None, ext
-    raise HTTPException(status_code=404, detail="Photo file missing on server")
+    # _materialize_photo_path: returns local path if on disk, re-downloads from CDN otherwise.
+    path = await _materialize_photo_path(dict(row))
+    return path, None
 
 
 async def get_photo_file_path(session: AsyncSession, client_id: UUID, photo_id: str) -> Path:
