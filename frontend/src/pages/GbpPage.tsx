@@ -1894,8 +1894,14 @@ function BrandKitTab({ d }: { d: GbpOverview }) {
   });
   const logoLightRef = useRef<HTMLInputElement>(null);
   const logoDarkRef = useRef<HTMLInputElement>(null);
-  const logoUrl = (path?: string | null) =>
-    path ? `${path}${token ? `?token=${encodeURIComponent(token)}` : ""}` : null;
+  const logoUrl = (path?: string | null): string | null => {
+    if (!path) return null;
+    const base = import.meta.env.DEV
+      ? ""
+      : String(import.meta.env.VITE_API_BASE_URL ?? "").trim().replace(/\/+$/, "");
+    const url = base ? `${base}${path}` : path;
+    return token ? `${url}?token=${encodeURIComponent(token)}` : url;
+  };
   const field = (k: keyof GbpBrandKit) => (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) =>
     setForm((f) => ({ ...f, [k]: e.target.value }));
 
