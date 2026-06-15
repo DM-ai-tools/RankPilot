@@ -33,7 +33,7 @@ GBP_V4_BASE = "https://mybusiness.googleapis.com/v4"
 GBP_UPLOAD_BASE = "https://mybusiness.googleapis.com/upload/v1/media"
 GBP_ACCOUNTS_URL = "https://mybusinessaccountmanagement.googleapis.com/v1/accounts"
 _GBP_LOCATIONS_READ_MASK = "name"
-_PUBLISH_URL_TTL_SEC = 900
+_PUBLISH_URL_TTL_SEC = 21600  # 6 hours — Google may fetch asynchronously after post is created
 _MIN_PHOTO_BYTES = 10_240
 
 _SLOT_TO_GBP_CATEGORY: dict[str, str] = {
@@ -302,7 +302,13 @@ async def resolve_post_image_source_url(
     *,
     prefer_cdn: bool = False,
 ) -> str | None:
-    """Public HTTPS URL Google can fetch for a GBP post image."""
+    """Public HTTPS URL Google can fetch for a GBP post image.
+
+    Priority order:
+    1. ext_url (Runway/CDN) — works on Railway ephemeral disk with no extra setup
+    2. Signed API URL via PUBLIC_API_BASE_URL — only when file is confirmed on disk
+    3. Re-download + CDN upload as last resort
+    """
     photo_id = str(photo_id or "").strip()
     if not photo_id:
         return None
@@ -313,24 +319,27 @@ async def resolve_post_image_source_url(
     except HTTPException:
         return None
     ext_url = str(row.get("external_source_url") or "").strip()
+    local_path = Path(str(row["storage_path"]))
 
-    if prefer_cdn:
-        if _is_public_https_url(ext_url):
-            return ext_url
-        try:
-            materialized = await _materialize_photo_path(row)
-            return await _dev_public_url_for_local_file(materialized)
-        except HTTPException as exc:
-            logger.warning("Post image CDN fallback failed for %s: %s", photo_id, exc.detail)
-            return None
-
-    # Prefer our signed API URL on Railway/production — stable and serves our copy of the image.
-    if _google_can_fetch_publish_url(settings):
-        return build_photo_publish_source_url(photo_id, client_id, settings)
-
+    # 1. Use external CDN/Runway URL if it's a valid public HTTPS URL.
+    #    For freshly generated images this is always valid (Runway CDN).
+    #    This is the most Railway-safe option (no ephemeral disk dependency).
     if _is_public_https_url(ext_url):
         return ext_url
 
+    # 2. Signed API URL — only when the file actually exists on this instance's disk.
+    if _google_can_fetch_publish_url(settings) and local_path.is_file():
+        return build_photo_publish_source_url(photo_id, client_id, settings)
+
+    # 3. Try to materialise (re-download if Runway URL works) then serve via signed URL.
+    if _google_can_fetch_publish_url(settings):
+        try:
+            await _materialize_photo_path(row)  # re-downloads Runway URL to disk
+            return build_photo_publish_source_url(photo_id, client_id, settings)
+        except HTTPException:
+            pass
+
+    # 4. Last resort: upload to a public temp CDN so Google can fetch it.
     try:
         materialized = await _materialize_photo_path(row)
         return await _dev_public_url_for_local_file(materialized)
@@ -577,6 +586,31 @@ async def generate_post_image_from_content(
     )
 
     runway_url = str(urls[0]).strip()
+
+    # Try to upload the branded image to a permanent CDN now so that
+    # Railway's ephemeral disk loss doesn't break future post publishes.
+    cdn_url: str | None = None
+    s = get_settings()
+    _freeimage_key = (s.freeimage_api_key or "").strip()
+    _imgbb_key = (s.imgbb_api_key or "").strip()
+    if dest.is_file():
+        try:
+            mime = _mime_for_path(dest)
+            data = dest.read_bytes()
+            async with httpx.AsyncClient(timeout=90.0, follow_redirects=True) as _http:
+                if _freeimage_key:
+                    cdn_url = await _upload_freeimage(_http, data, _freeimage_key)
+                if not cdn_url and _imgbb_key:
+                    cdn_url = await _upload_imgbb(_http, data, _imgbb_key)
+                if not cdn_url:
+                    cdn_url = await _upload_tmpfiles(_http, dest, data, mime)
+        except Exception:
+            logger.warning("Could not upload post image to CDN at generation time", exc_info=True)
+
+    # Use CDN URL if we got one (permanent or at least hour-long URL),
+    # otherwise fall back to Runway URL (valid for ~24h after generation).
+    ext_url_to_store = cdn_url or runway_url or None
+
     await session.execute(
         text(
             """
@@ -592,7 +626,7 @@ async def generate_post_image_from_content(
             "prompt": encode_prompt_meta(meta, runway_prompt),
             "path": str(dest),
             "task": result.get("task_id"),
-            "ext_url": runway_url or None,
+            "ext_url": ext_url_to_store,
         },
     )
     return {
