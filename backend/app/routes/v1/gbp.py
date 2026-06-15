@@ -323,12 +323,11 @@ async def api_get_photo_file(
     photo_id: str,
     client_id: TokenClientId,
 ):
-    """Serve photo file — supports ?token= for browser img tags (no DbSession — Bearer-only dep breaks <img>).
+    """Serve photo file — supports ?token= for browser img tags.
 
-    When the file is not on disk (Railway ephemeral restart), redirects the browser directly
-    to the CDN/Runway URL — fast, no server-side download required.
+    Fallback order: local disk → DB image_data (Railway-safe) → CDN redirect.
     """
-    from fastapi.responses import RedirectResponse
+    from fastapi.responses import RedirectResponse, Response
     from sqlalchemy import text
 
     from app.db.session import session_maker
@@ -338,10 +337,17 @@ async def api_get_photo_file(
             text("SELECT set_config('app.client_id', :cid, true)"),
             {"cid": str(client_id)},
         )
-        path, redirect = await resolve_photo_file(session, client_id, photo_id)
-    if redirect:
-        return RedirectResponse(redirect, status_code=302)
-    return FileResponse(str(path), media_type=_mime_for_path(path))
+        result = await resolve_photo_file(session, client_id, photo_id)
+
+    path, extra = result
+    if path is not None:
+        return FileResponse(str(path), media_type=_mime_for_path(path))
+    if isinstance(extra, bytes):
+        return Response(content=extra, media_type="image/png")
+    if isinstance(extra, str):
+        return RedirectResponse(extra, status_code=302)
+    from fastapi import HTTPException
+    raise HTTPException(status_code=404, detail="Photo not available")
 
 
 @router.get("/photos/{photo_id}/publish-source")

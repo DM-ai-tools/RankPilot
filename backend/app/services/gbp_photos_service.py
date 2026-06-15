@@ -82,6 +82,7 @@ async def _ensure_photos_table(session: AsyncSession) -> None:
               storage_path text NOT NULL,
               runway_task_id text,
               slot_label text,
+              image_data bytea,
               status text NOT NULL DEFAULT 'ready',
               created_at timestamptz NOT NULL DEFAULT now()
             )
@@ -96,6 +97,9 @@ async def _ensure_photos_table(session: AsyncSession) -> None:
     )
     await session.execute(
         text("ALTER TABLE rp_gbp_photos ADD COLUMN IF NOT EXISTS external_source_url text")
+    )
+    await session.execute(
+        text("ALTER TABLE rp_gbp_photos ADD COLUMN IF NOT EXISTS image_data bytea")
     )
 
 
@@ -350,18 +354,20 @@ async def resolve_post_image_source_url(
 
 async def resolve_photo_file(
     session: AsyncSession, client_id: UUID, photo_id: str
-) -> tuple[Path | None, str | None]:
-    """Return (local_path, None) when the file is on disk, or (None, redirect_url) otherwise.
+) -> tuple[Path | None, str | bytes | None]:
+    """Return (path, None) | (None, redirect_url) | (None, image_bytes).
 
-    Railway ephemeral disk: files are gone after restart.  We redirect the browser
-    directly to the CDN/Runway URL which is fast (no server-side download needed for preview).
+    Priority:
+    1. Local disk file — fastest; always present right after generation.
+    2. image_data from DB — survives Railway restarts and multi-instance deploys.
+    3. external_source_url redirect — Runway CDN (~24 h), not tmpfiles (1 h).
     """
     await _ensure_photos_table(session)
     row = (
         await session.execute(
             text(
                 """
-                SELECT storage_path, external_source_url FROM rp_gbp_photos
+                SELECT storage_path, external_source_url, image_data FROM rp_gbp_photos
                 WHERE id = :id AND client_id = :cid AND status IN ('ready', 'published')
                 """
             ),
@@ -370,13 +376,29 @@ async def resolve_photo_file(
     ).mappings().first()
     if not row:
         raise HTTPException(status_code=404, detail="Photo not found")
+
+    # 1. Local disk
     path = Path(str(row["storage_path"]))
     if path.is_file():
         return path, None
+
+    # 2. DB-stored bytes (Railway-safe — never expires)
+    img_bytes = row.get("image_data")
+    if img_bytes:
+        # Re-hydrate disk so next request is a fast FileResponse
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(bytes(img_bytes))
+            return path, None
+        except Exception:
+            pass
+        return None, bytes(img_bytes)
+
+    # 3. CDN redirect
     ext = str(row.get("external_source_url") or "").strip()
-    # Skip tmpfiles.org redirects — they expire in 1 hour and cause broken previews.
     if (ext.startswith("https://") or ext.startswith("http://")) and "tmpfiles.org" not in ext:
         return None, ext
+
     raise HTTPException(status_code=404, detail="Photo file unavailable — re-generate the image")
 
 
@@ -411,9 +433,9 @@ async def upload_gbp_photo(
         text(
             """
             INSERT INTO rp_gbp_photos
-                (id, client_id, source, prompt, storage_path, slot_label, status)
+                (id, client_id, source, prompt, storage_path, slot_label, status, image_data)
             VALUES
-                (:id, :cid, 'upload', NULL, :path, :label, 'ready')
+                (:id, :cid, 'upload', NULL, :path, :label, 'ready', :img)
             """
         ),
         {
@@ -421,6 +443,7 @@ async def upload_gbp_photo(
             "cid": str(client_id),
             "path": str(dest),
             "label": (slot_label or "").strip() or None,
+            "img": data,
         },
     )
     return {"id": photo_id, "source": "upload", "url": _photo_public_path(photo_id)}
@@ -489,13 +512,15 @@ async def generate_gbp_photo(
     )
 
     runway_url = str(urls[0]).strip()
+    img_bytes: bytes | None = dest.read_bytes() if dest.is_file() else None
     await session.execute(
         text(
             """
             INSERT INTO rp_gbp_photos
-                (id, client_id, source, prompt, storage_path, runway_task_id, slot_label, status, external_source_url)
+                (id, client_id, source, prompt, storage_path, runway_task_id, slot_label, status,
+                 external_source_url, image_data)
             VALUES
-                (:id, :cid, 'runway', :prompt, :path, :task, :label, 'ready', :ext_url)
+                (:id, :cid, 'runway', :prompt, :path, :task, :label, 'ready', :ext_url, :img)
             """
         ),
         {
@@ -506,6 +531,7 @@ async def generate_gbp_photo(
             "task": result.get("task_id"),
             "label": (slot_label or "").strip() or None,
             "ext_url": runway_url or None,
+            "img": img_bytes,
         },
     )
     return {
@@ -614,13 +640,22 @@ async def generate_post_image_from_content(
     # Never store tmpfiles URLs — they expire in 1 hour.
     ext_url_to_store = cdn_url or runway_url or None
 
+    # Store branded image bytes in DB — survives Railway restarts and multi-instance deploys.
+    img_bytes: bytes | None = None
+    if dest.is_file():
+        try:
+            img_bytes = dest.read_bytes()
+        except Exception:
+            pass
+
     await session.execute(
         text(
             """
             INSERT INTO rp_gbp_photos
-                (id, client_id, source, prompt, storage_path, runway_task_id, slot_label, status, external_source_url)
+                (id, client_id, source, prompt, storage_path, runway_task_id, slot_label, status,
+                 external_source_url, image_data)
             VALUES
-                (:id, :cid, 'gbp_post', :prompt, :path, :task, 'At work', 'ready', :ext_url)
+                (:id, :cid, 'gbp_post', :prompt, :path, :task, 'At work', 'ready', :ext_url, :img)
             """
         ),
         {
@@ -630,6 +665,7 @@ async def generate_post_image_from_content(
             "path": str(dest),
             "task": result.get("task_id"),
             "ext_url": ext_url_to_store,
+            "img": img_bytes,
         },
     )
     return {
