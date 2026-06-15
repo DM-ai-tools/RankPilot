@@ -977,9 +977,9 @@ def _parse_structured_prompt_slot(raw: str) -> tuple[str | None, str | None, str
         text = text[: kw_match.start()].strip()
 
     angle_match = re.search(
-        r"(?:^|\n)Post angle(?:\s*\(for copy\))?:\s*(.+?)\s*(?:\n|$)",
+        r"(?:^|\n)Post angle(?:\s*\(for copy\))?:\s*(.+?)(?=\nKEYWORD:|\Z)",
         text,
-        re.I | re.M,
+        re.I | re.S,
     )
     if angle_match:
         post_angle = angle_match.group(1).strip()
@@ -990,32 +990,58 @@ def _parse_structured_prompt_slot(raw: str) -> tuple[str | None, str | None, str
     return keyword, image_prompt, post_angle
 
 
+def _looks_like_image_brief(text: str) -> bool:
+    """True when text is a Runway/image-generation brief, not customer-facing copy."""
+    low = (text or "").lower()
+    markers = (
+        "create a unique, professional google business profile post photo",
+        "visual hook",
+        "composition",
+        "colour mood",
+        "color mood",
+        "logo placement zone",
+        "strict rules:",
+        "core keyword:",
+        "photorealistic",
+    )
+    if any(m in low for m in markers):
+        return True
+    if re.search(r"#[0-9A-Fa-f]{6}", text or ""):
+        return True
+    return len(text) > 280 and "image" in low
+
+
 def _resolve_target_keyword_from_prompt(
     user_prompt: str | None,
     ahrefs_kws: list[str],
     fallback: str,
-) -> tuple[str, str | None]:
-    """Map a user prompt slot to (target_keyword, creative_direction).
+) -> tuple[str, str | None, str | None]:
+    """Map a user prompt slot to (target_keyword, copy_direction, image_theme).
 
     When the user clicks an Ahrefs keyword in the UI it lands in the prompt field.
     That value must become target_keyword — not the first unrelated Ahrefs phrase.
     Structured slots from AI prompt gen use KEYWORD: footer lines.
+    Image briefs must never be used as post copy — only post_angle drives the text.
     """
     raw = (user_prompt or "").strip()
     if not raw:
-        return fallback, None
+        return fallback, None, None
 
     parsed_kw, image_prompt, post_angle = _parse_structured_prompt_slot(raw)
     if parsed_kw:
-        direction = post_angle or image_prompt
+        copy_dir = (post_angle or "").strip() or None
+        image_theme = (image_prompt or "").strip() or None
         ahrefs_by_lower = {k.lower(): k for k in ahrefs_kws if (k or "").strip()}
         target = ahrefs_by_lower.get(parsed_kw.lower(), parsed_kw)
-        return target, direction
+        return target, copy_dir, image_theme
 
     ahrefs_by_lower = {k.lower(): k for k in ahrefs_kws if (k or "").strip()}
 
     if raw.lower() in ahrefs_by_lower:
-        return ahrefs_by_lower[raw.lower()], None
+        return ahrefs_by_lower[raw.lower()], None, None
+
+    if _looks_like_image_brief(raw):
+        return fallback, None, raw
 
     if "," in raw:
         parts = [p.strip() for p in raw.split(",") if p.strip()]
@@ -1024,20 +1050,20 @@ def _resolve_target_keyword_from_prompt(
             kw = ahrefs_by_lower[matched.lower()]
             direction_parts = [p for p in parts if p.lower() != kw.lower()]
             direction = ", ".join(direction_parts).strip() or None
-            return kw, direction
+            return kw, direction, None
         if len(parts) >= 2:
-            return parts[-1], ", ".join(parts[:-1]).strip() or None
+            return parts[-1], ", ".join(parts[:-1]).strip() or None, None
 
     for kw in sorted(ahrefs_kws, key=len, reverse=True):
         if kw and kw.lower() in raw.lower():
             direction = re.sub(re.escape(kw), "", raw, flags=re.I).strip(" ,.-")
-            return kw, direction or None
+            return kw, direction or None, None
 
     # Short phrase without sentence punctuation — treat as the chosen keyword.
     if len(raw) <= 100 and not re.search(r"[.!?]", raw):
-        return raw, None
+        return raw, None, None
 
-    return fallback, raw
+    return fallback, raw, None
 
 
 _BATCH_ANGLE_VARIANTS: list[tuple[str, str]] = [
@@ -1270,6 +1296,7 @@ async def _generate_one_gbp_post(
     area: str,
     location_ctx: dict[str, Any],
     user_direction: str | None,
+    image_theme: str | None = None,
     profile: dict,
     brand: dict,
     settings: Any,
@@ -1383,6 +1410,8 @@ async def _generate_one_gbp_post(
         f"- Say 'our team' instead of '{city_name} team' or '{location_label} team'\n"
         f"- Use unique phrasing; avoid clichés\n"
         f"- Plain text only (emoji + bullets with • or -). No markdown headers.\n"
+        f"- Customer-facing copy only — never mention hex colour codes (#RRGGBB), brand palette "
+        f"values, image prompts, composition notes, or photo-generation directions.\n"
         f"{avoid_block}"
     )
     logger.info(
@@ -1416,7 +1445,7 @@ async def _generate_one_gbp_post(
         business_name=bname,
         keyword=target_keyword,
         metro=str(profile.get("metro_label") or area),
-        theme=direction,
+        theme=(image_theme or user_direction or "").strip(),
         brand_config=brand,
         post_index=post_index,
         post_total=post_total,
@@ -1715,7 +1744,8 @@ async def generate_gbp_post_directions(
         "- STRICT RULES block: NO text/words/logos/watermarks in image, NO stock clichés, photorealistic, "
         "square 1:1 friendly, unmistakably about the keyword service\n"
         "- Write like a senior creative director briefing a photographer — rich, cinematic, persuasive\n"
-        "- post_angle = shorter copy direction for the text post (separate from image_prompt)\n"
+        "- post_angle = shorter copy direction for the text post (customer-facing marketing copy; "
+        "no hex codes, colour values, or image-generation language)\n"
         f"- return exactly {prompt_count} items, each visually distinct"
     )
 
@@ -1844,16 +1874,18 @@ async def generate_gbp_posts(
     batch_keywords_default = _pick_diverse_keywords(ahrefs_kws, post_count)
     resolved_keywords: list[str] = []
     resolved_directions: list[str | None] = []
+    resolved_image_themes: list[str | None] = []
 
     for i in range(post_count):
         slot = user_prompt_slots[i] if i < len(user_prompt_slots) else None
-        target_kw, direction = _resolve_target_keyword_from_prompt(
+        target_kw, direction, image_theme = _resolve_target_keyword_from_prompt(
             slot,
             ahrefs_kws,
             batch_keywords_default[i],
         )
         resolved_keywords.append(target_kw)
         resolved_directions.append(direction)
+        resolved_image_themes.append(image_theme)
 
     prior_batch_summaries: list[str] = []
     prior_archetypes: list[str] = []
@@ -1878,6 +1910,7 @@ async def generate_gbp_posts(
                 area=areas[i],
                 location_ctx=location_ctx,
                 user_direction=direction,
+                image_theme=resolved_image_themes[i],
                 profile=profile,
                 brand=brand,
                 settings=settings,
@@ -2687,9 +2720,23 @@ def _trim_gbp_post_to_limit(text: str, limit: int = GBP_POST_CHAR_LIMIT) -> str:
     return chunk.strip()
 
 
+def _strip_design_artifacts_from_post(text: str) -> str:
+    """Remove hex codes and image-brief language that must not appear in GBP post copy."""
+    body = (text or "").strip()
+    if not body:
+        return body
+    body = re.sub(r"\([^)]*#[0-9A-Fa-f]{6}[^)]*\)", "", body)
+    body = re.sub(r"#[0-9A-Fa-f]{6}\b", "", body)
+    body = re.sub(r"\b(?:primary|secondary)\s+colou?rs?\b", "brand styling", body, flags=re.I)
+    body = re.sub(r"\s{2,}", " ", body)
+    body = re.sub(r" +\.", ".", body)
+    return body.strip()
+
+
 def normalize_gbp_post_body(text: str, *, api_key: str | None = None) -> str:
     """Ensure GBP post fits 1,500 chars and ends on a complete sentence."""
-    body = _trim_gbp_post_to_limit(text)
+    body = _strip_design_artifacts_from_post(text)
+    body = _trim_gbp_post_to_limit(body)
     if _gbp_post_ends_complete(body):
         return body
     if api_key:
