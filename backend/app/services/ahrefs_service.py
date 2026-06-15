@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Any
 
@@ -74,16 +75,28 @@ class AhrefsClient:
     async def aclose(self) -> None:
         await self._http.aclose()
 
-    async def _get(self, path: str, params: dict[str, Any]) -> dict[str, Any]:
+    async def _get(self, path: str, params: dict[str, Any], *, max_retries: int = 3) -> dict[str, Any]:
         url = f"{_BASE}/{path.lstrip('/')}"
-        resp = await self._http.get(
-            url,
-            params=params,
-            headers={
-                "Authorization": f"Bearer {self._api_key}",
-                "Accept": "application/json",
-            },
-        )
+        for attempt in range(max_retries + 1):
+            resp = await self._http.get(
+                url,
+                params=params,
+                headers={
+                    "Authorization": f"Bearer {self._api_key}",
+                    "Accept": "application/json",
+                },
+            )
+            if resp.status_code == 429 and attempt < max_retries:
+                retry_after = resp.headers.get("Retry-After")
+                try:
+                    wait_s = max(2, min(60, int(retry_after))) if retry_after else 2 ** attempt * 2
+                except (TypeError, ValueError):
+                    wait_s = 2 ** attempt * 2
+                logger.info("Ahrefs 429 on %s — retry %d/%d in %ss", path, attempt + 1, max_retries, wait_s)
+                await asyncio.sleep(wait_s)
+                continue
+            break
+        resp = resp  # noqa: PLW2901 — last response after retry loop
         if resp.status_code == 401:
             raise HTTPException(
                 status_code=status.HTTP_502_BAD_GATEWAY,

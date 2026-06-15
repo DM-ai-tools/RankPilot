@@ -84,6 +84,47 @@ async def get_ahrefs_cache(
     return payload, fetched, expires
 
 
+async def get_ahrefs_cache_stale(
+    session: AsyncSession,
+    cache_key: str,
+) -> tuple[dict[str, Any] | None, datetime | None, datetime | None]:
+    """Return cache row even if expired — used when Ahrefs returns 429."""
+    try:
+        row = (
+            await session.execute(
+                text(
+                    """
+                    SELECT payload, fetched_at, expires_at
+                    FROM rp_ahrefs_keyword_cache
+                    WHERE cache_key = :key
+                    ORDER BY fetched_at DESC
+                    LIMIT 1
+                    """
+                ),
+                {"key": cache_key},
+            )
+        ).mappings().first()
+    except Exception:
+        await _recover_session_after_db_error(session)
+        return None, None, None
+
+    if not row:
+        return None, None, None
+
+    payload = row["payload"]
+    if isinstance(payload, str):
+        try:
+            payload = json.loads(payload)
+        except json.JSONDecodeError:
+            return None, None, None
+    if not isinstance(payload, dict):
+        return None, None, None
+
+    fetched = row.get("fetched_at")
+    expires = row.get("expires_at")
+    return payload, fetched, expires
+
+
 async def set_ahrefs_cache(
     session: AsyncSession,
     cache_key: str,

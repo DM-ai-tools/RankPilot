@@ -497,7 +497,12 @@ function PostsTab({
                 Tick to select · click keyword text to view full phrase
               </p>
               {ahrefsKeywords.length === 0 && !ahrefsQ.isLoading ? (
-                <p className="text-[11px] text-rp-tlight">No Ahrefs keywords yet.</p>
+                <p className="text-[11px] text-rp-tlight">
+                  {ahrefsQ.isError
+                    ? formatApiError(ahrefsQ.error)
+                    : ahrefsQ.data?.message
+                      ?? "No Ahrefs keywords yet — complete Business Setup or refresh keywords."}
+                </p>
               ) : (
                 <div className="max-h-48 space-y-1 overflow-y-auto rounded-lg border border-rp-border bg-[#F8FAFC] p-2">
                   {ahrefsKeywords.map((item) => {
@@ -658,7 +663,10 @@ function PostsTab({
               </div>
               {ahrefsKeywords.length === 0 && !ahrefsQ.isLoading ? (
                 <p className="text-[11px] text-rp-tlight">
-                  No Ahrefs keywords yet — add your AHREFS_API_KEY in Settings.
+                  {ahrefsQ.isError
+                    ? formatApiError(ahrefsQ.error)
+                    : ahrefsQ.data?.message
+                      ?? "No Ahrefs keywords yet — complete Business Setup or refresh keywords."}
                 </p>
               ) : (
                 <div className="flex max-h-64 flex-wrap gap-1.5 overflow-y-auto rounded-lg border border-rp-border bg-[#F8FAFC] p-2.5">

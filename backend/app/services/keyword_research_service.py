@@ -17,7 +17,7 @@ from app.schemas.keywords import (
     SuburbKeywordPhrase,
     SuburbKeywordResearchResponse,
 )
-from app.services.ahrefs_cache_service import build_cache_key, cache_timestamps_iso, get_ahrefs_cache, set_ahrefs_cache
+from app.services.ahrefs_cache_service import build_cache_key, cache_timestamps_iso, get_ahrefs_cache, get_ahrefs_cache_stale, set_ahrefs_cache
 from app.services.ahrefs_service import AhrefsClient
 from app.services.keyword_lookup_service import _country_for_metro
 from app.services.overview_service import _primary_state_from_metro
@@ -471,7 +471,24 @@ async def fetch_suburb_keyword_research(
             client_id=client_id,
         )
         return result
-    except HTTPException:
+    except HTTPException as exc:
+        if exc.status_code == status.HTTP_429_TOO_MANY_REQUESTS:
+            stale, fetched_at, expires_at = await get_ahrefs_cache_stale(session, cache_key)
+            if stale:
+                cached_at_s, expires_s = cache_timestamps_iso(fetched_at, expires_at)
+                out = SuburbKeywordResearchResponse.model_validate(stale)
+                out.from_cache = True
+                out.cached_at = cached_at_s
+                out.cache_expires_at = expires_s
+                out.message = "Ahrefs rate limit — showing cached keywords. Try again in a minute."
+                return out
+            return SuburbKeywordResearchResponse(
+                primary_keyword=primary,
+                metro_label=metro,
+                location_scope=scope,
+                message="Ahrefs rate limit — wait a minute and try again.",
+                source="none",
+            )
         raise
     except Exception as exc:
         logger.exception("Ahrefs suburb keyword research failed")

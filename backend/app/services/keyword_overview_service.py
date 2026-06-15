@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 from uuid import UUID
 
-from fastapi import HTTPException
+from fastapi import HTTPException, status
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -20,6 +20,7 @@ from app.services.ahrefs_cache_service import (
     build_cache_key,
     cache_timestamps_iso,
     get_ahrefs_cache,
+    get_ahrefs_cache_stale,
     set_ahrefs_cache,
 )
 from app.services.ahrefs_service import AhrefsClient, difficulty_label, format_volume_display, kd_short_label
@@ -178,22 +179,39 @@ async def fetch_keyword_overview(
 
     client = AhrefsClient()
     try:
-        overview_row = await client.keyword_overview_one(keyword, country=cc)
-        terms_match = await client.matching_terms(keyword, country=cc, limit=25, terms="all")
-        questions = await client.matching_terms(keyword, country=cc, limit=15, terms="questions")
-        also_rank_for = await client.related_terms(
-            keyword, country=cc, limit=15, terms="also_rank_for"
-        )
-        also_talk_about = await client.related_terms(
-            keyword, country=cc, limit=15, terms="also_talk_about"
-        )
-        seed_terms = _seed_terms(keyword)
-        also_rank_for = _filter_relevant(also_rank_for, seed_terms)
-        also_talk_about = _filter_relevant(also_talk_about, seed_terms)
-        if not also_rank_for:
-            also_rank_for = _filter_relevant(
-                await client.search_suggestions(keyword, country=cc, limit=12), seed_terms
+        try:
+            overview_row = await client.keyword_overview_one(keyword, country=cc)
+            terms_match = await client.matching_terms(keyword, country=cc, limit=25, terms="all")
+            questions = await client.matching_terms(keyword, country=cc, limit=15, terms="questions")
+            also_rank_for = await client.related_terms(
+                keyword, country=cc, limit=15, terms="also_rank_for"
             )
+            also_talk_about = await client.related_terms(
+                keyword, country=cc, limit=15, terms="also_talk_about"
+            )
+            seed_terms = _seed_terms(keyword)
+            also_rank_for = _filter_relevant(also_rank_for, seed_terms)
+            also_talk_about = _filter_relevant(also_talk_about, seed_terms)
+            if not also_rank_for:
+                also_rank_for = _filter_relevant(
+                    await client.search_suggestions(keyword, country=cc, limit=12), seed_terms
+                )
+        except HTTPException as exc:
+            if exc.status_code != status.HTTP_429_TOO_MANY_REQUESTS:
+                raise
+            stale, fetched_at, expires_at = await get_ahrefs_cache_stale(session, cache_key)
+            if stale:
+                cached_at_s, expires_s = cache_timestamps_iso(fetched_at, expires_at)
+                out = KeywordOverviewResponse.model_validate(stale)
+                out.from_cache = True
+                out.cached_at = cached_at_s
+                out.cache_expires_at = expires_s
+                out.message = "Ahrefs rate limit — showing cached overview. Try again in a minute."
+                return out
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail="Ahrefs rate limit — wait a minute and try again.",
+            ) from exc
     finally:
         await client.aclose()
 

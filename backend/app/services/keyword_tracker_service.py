@@ -29,7 +29,9 @@ from app.services.keyword_lookup_service import _country_for_metro
 
 logger = logging.getLogger(__name__)
 
-_MAX_LIVE_CHECKS = 10          # Ahrefs API calls per sync (rest from cache)
+_MAX_LIVE_CHECKS = 10          # Ahrefs keywords per sync (rest from cache)
+_MAX_FORCE_LIVE = 5            # cap live Ahrefs calls on force refresh (avoid 429)
+_AHREFS_DELAY_SEC = 2.0        # pause between live Ahrefs keyword checks
 _MAX_MAPS_CHECKS = 3           # DataForSEO live Maps checks per sync (published only)
 _MAPS_TIMEOUT_SEC = 45.0       # live Maps API can hang — cap wait time
 _STALENESS_HOURS = 6           # skip re-check if snapshot < 6h old
@@ -265,9 +267,12 @@ async def _fetch_ahrefs_ranks(
     try:
         client = AhrefsClient()
         try:
-            positions, overview = await asyncio.gather(
-                client.serp_overview(keyword, country=country, top_positions=20),
-                client.keyword_overview_one(keyword, country=country, include_history=False),
+            # Sequential calls — parallel burst triggers Ahrefs 429 on bulk sync.
+            overview = await client.keyword_overview_one(
+                keyword, country=country, include_history=False
+            )
+            positions = await client.serp_overview(
+                keyword, country=country, top_positions=20
             )
         finally:
             await client.aclose()
@@ -295,6 +300,14 @@ async def _fetch_ahrefs_ranks(
         return organic_pos, volume, local_pack_pos
     except Exception as exc:
         logger.warning("Ahrefs rank/volume fetch failed for %r: %s", keyword, exc)
+        if isinstance(cached, dict):
+            vol = cached.get("volume")
+            if vol is not None or cached.get("organic_position") is not None:
+                return (
+                    cached.get("organic_position"),
+                    vol,
+                    cached.get("local_pack_position"),
+                )
         return None, None, None
 
 
@@ -526,7 +539,7 @@ async def run_rank_checks(
     if not keywords:
         return {}
 
-    ahrefs_cap = len(keywords) if force else _MAX_LIVE_CHECKS
+    ahrefs_cap = min(len(keywords), _MAX_FORCE_LIVE if force else _MAX_LIVE_CHECKS)
     maps_cap = _MAX_MAPS_CHECKS
 
     # Find which already have a fresh snapshot today
@@ -591,6 +604,8 @@ async def run_rank_checks(
                 session, client_id, kw, country, meta, force=force or is_published
             )
             live_used += 1
+            if live_used < ahrefs_cap:
+                await asyncio.sleep(_AHREFS_DELAY_SEC)
         else:
             # Fallback: pull last snapshot values
             snap = (
