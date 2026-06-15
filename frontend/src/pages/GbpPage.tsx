@@ -756,23 +756,26 @@ function PostsTab({
                     <button
                       key={kw}
                       type="button"
-                      title={`Add "${kw}" (${formatKeywordVolume(item.avg_monthly_searches)}) to prompt ${activePromptIdx + 1}`}
+                      title={`Set "${kw}" as the target keyword for post ${activePromptIdx + 1}`}
                       onClick={() => {
                         const next = [...prompts];
-                        const cur = (next[activePromptIdx] ?? "").trim();
-                        next[activePromptIdx] = cur ? `${cur}, ${kw}` : kw;
+                        next[activePromptIdx] = kw;
                         setPrompts(next);
                       }}
-                      className="rounded-full border border-[#C2E0FF] bg-white px-2 py-0.5 text-[10px] font-medium text-[#0050A0] transition hover:border-[#34A853] hover:bg-[#E6F4EA] hover:text-[#137333] active:scale-95"
+                      className={`rounded-full border px-2 py-0.5 text-[10px] font-medium transition active:scale-95 ${
+                        (prompts[activePromptIdx] ?? "").trim() === kw
+                          ? "border-[#34A853] bg-[#E6F4EA] text-[#137333]"
+                          : "border-[#C2E0FF] bg-white text-[#0050A0] hover:border-[#34A853] hover:bg-[#E6F4EA] hover:text-[#137333]"
+                      }`}
                     >
-                      + {kw}
+                      {(prompts[activePromptIdx] ?? "").trim() === kw ? "✓" : "+"} {kw}
                     </button>
                     );
                   })}
                 </div>
               )}
               <p className="mt-1.5 text-[10px] text-rp-tlight">
-                Click a keyword to set the target phrase for the active post slot. Add extra text before it for a custom angle.
+                Click a keyword to set it as the <strong>single target</strong> for the active post slot. Only one keyword per post.
               </p>
             </div>
           </div>
@@ -849,6 +852,9 @@ function PostsTab({
                   {draft.target_keyword && <Badge tone="green">"{draft.target_keyword}" included</Badge>}
                   {statusBadge(draft.status)}
                 </div>
+                {!photoUrl && draft.image_note && (
+                  <p className="mt-1.5 text-[11px] text-amber-600">{draft.image_note}</p>
+                )}
               </div>
             ) : (
               <p className="text-sm text-rp-tlight">No draft post yet. Click "+ Generate" to create with AI.</p>

@@ -932,7 +932,13 @@ def _parse_comma_prompts(raw: str | None, limit: int) -> list[str]:
 
 
 def _parse_post_prompt_slots(raw: str | None, limit: int) -> list[str | None]:
-    """One slot per post — preserves empty lines and multi-line prompts."""
+    """One slot per post — only split on <<<POST_SLOT>>> or newlines, never commas.
+
+    Comma-splitting was removed because keywords naturally contain commas
+    (e.g. "digital marketing, seo agency") and splitting them breaks targeting.
+    The frontend uses <<<POST_SLOT>>> for multi-post batches and newlines for
+    simple multi-line prompts. A bare comma-containing string is always slot 0.
+    """
     if not (raw or "").strip():
         return [None] * limit
     text = raw or ""
@@ -948,7 +954,7 @@ def _parse_post_prompt_slots(raw: str | None, limit: int) -> list[str | None]:
         return slots
     if "\n" in text:
         lines = text.split("\n")
-        slots = []
+        slots: list[str | None] = []
         for i in range(limit):
             if i < len(lines):
                 s = lines[i].strip()
@@ -956,11 +962,10 @@ def _parse_post_prompt_slots(raw: str | None, limit: int) -> list[str | None]:
             else:
                 slots.append(None)
         return slots
-    parts = [p.strip() for p in text.split(",") if p.strip()]
-    slots = [None] * limit
-    for i, part in enumerate(parts[:limit]):
-        slots[i] = part
-    return slots
+    # Single string with no slot separator — treat the whole thing as slot 0.
+    result: list[str | None] = [None] * limit
+    result[0] = text.strip()
+    return result
 
 
 def _parse_structured_prompt_slot(raw: str) -> tuple[str | None, str | None, str | None]:
@@ -1032,7 +1037,16 @@ def _resolve_target_keyword_from_prompt(
         copy_dir = (post_angle or "").strip() or None
         image_theme = (image_prompt or "").strip() or None
         ahrefs_by_lower = {k.lower(): k for k in ahrefs_kws if (k or "").strip()}
-        target = ahrefs_by_lower.get(parsed_kw.lower(), parsed_kw)
+        # If AI concatenated multiple keywords with commas, pick the last exact match.
+        if "," in parsed_kw and parsed_kw.lower() not in ahrefs_by_lower:
+            parts = [p.strip() for p in parsed_kw.split(",") if p.strip()]
+            matched = next((ahrefs_by_lower[p.lower()] for p in reversed(parts) if p.lower() in ahrefs_by_lower), None)
+            if matched:
+                target = matched
+            else:
+                target = parts[-1] if parts else parsed_kw
+        else:
+            target = ahrefs_by_lower.get(parsed_kw.lower(), parsed_kw)
         return target, copy_dir, image_theme
 
     ahrefs_by_lower = {k.lower(): k for k in ahrefs_kws if (k or "").strip()}
@@ -1043,8 +1057,14 @@ def _resolve_target_keyword_from_prompt(
     if _looks_like_image_brief(raw):
         return fallback, None, raw
 
+    # Multiple keywords joined by the UI chip-click ("kw1, kw2, kw3") — use only the last one
+    # to avoid storing a comma-joined string as target_keyword.
     if "," in raw:
         parts = [p.strip() for p in raw.split(",") if p.strip()]
+        # If every part is an Ahrefs keyword (multi-click in UI), use only the last one.
+        all_ahrefs = all(p.lower() in ahrefs_by_lower for p in parts)
+        if all_ahrefs:
+            return ahrefs_by_lower[parts[-1].lower()], None, None
         matched = next((p for p in reversed(parts) if p.lower() in ahrefs_by_lower), None)
         if matched:
             kw = ahrefs_by_lower[matched.lower()]
@@ -1775,9 +1795,16 @@ async def generate_gbp_post_directions(
     prompts_out: list[dict[str, str]] = []
     for i in range(prompt_count):
         item = raw_items[i] if i < len(raw_items) and isinstance(raw_items[i], dict) else {}
-        keyword = re.sub(r"\s+", " ", str(item.get("keyword") or assigned_keywords[i]).strip())
-        if not keyword:
-            keyword = assigned_keywords[i]
+        # Always prefer the pre-assigned keyword — the AI sometimes joins multiple keywords
+        # with commas in this field, which corrupts target_keyword downstream.
+        keyword = assigned_keywords[i]
+        ai_kw = re.sub(r"\s+", " ", str(item.get("keyword") or "").strip())
+        if ai_kw:
+            # Use the AI keyword only if it exactly matches one of the selected keywords
+            # (case-insensitive). If the AI concatenated multiple keywords, ignore it.
+            selected_lower = {s.lower(): s for s in selected}
+            if ai_kw.lower() in selected_lower:
+                keyword = selected_lower[ai_kw.lower()]
         post_angle = re.sub(r"\s+", " ", str(item.get("post_angle") or "").strip())
         image_prompt = str(item.get("image_prompt") or "").strip()
         archetype = str(item.get("archetype") or "").strip().upper()

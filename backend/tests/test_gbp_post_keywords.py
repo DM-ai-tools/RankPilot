@@ -18,6 +18,14 @@ def test_prompt_slot_preserves_empty_lines():
     assert slots == ["Digital Marketing services Melbourne", None, "seo tips"]
 
 
+def test_prompt_slot_comma_phrase_goes_to_slot_0_not_split():
+    # Commas inside a keyword phrase must NOT split into multiple slots.
+    slots = _parse_post_prompt_slots("digital marketing, seo agency, seo agency in melbourne Essendon", 3)
+    assert slots[0] == "digital marketing, seo agency, seo agency in melbourne Essendon"
+    assert slots[1] is None
+    assert slots[2] is None
+
+
 def test_clicked_keyword_becomes_target_not_first_ahrefs():
     kw, direction, image_theme = _resolve_target_keyword_from_prompt(
         "Digital Marketing services Melbourne",
