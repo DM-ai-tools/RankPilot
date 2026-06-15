@@ -53,10 +53,18 @@ async def _ensure_brand_kit_table(session: AsyncSession) -> None:
               body_font text NOT NULL DEFAULT '',
               logo_on_dark_path text,
               logo_on_light_path text,
+              logo_on_dark_data bytea,
+              logo_on_light_data bytea,
               updated_at timestamptz NOT NULL DEFAULT now()
             )
             """
         )
+    )
+    await session.execute(
+        text("ALTER TABLE rp_gbp_brand_kit ADD COLUMN IF NOT EXISTS logo_on_dark_data bytea")
+    )
+    await session.execute(
+        text("ALTER TABLE rp_gbp_brand_kit ADD COLUMN IF NOT EXISTS logo_on_light_data bytea")
     )
 
 
@@ -67,6 +75,13 @@ def _logo_public_path(kind: str) -> str:
 def _row_to_dict(row: dict, *, include_paths: bool = False) -> dict:
     logo_dark = row.get("logo_on_dark_path")
     logo_light = row.get("logo_on_light_path")
+    # Logo is "present" if the file is on disk OR if bytes are in DB (Railway-safe)
+    has_dark = bool(
+        (logo_dark and Path(str(logo_dark)).is_file()) or row.get("logo_on_dark_data")
+    )
+    has_light = bool(
+        (logo_light and Path(str(logo_light)).is_file()) or row.get("logo_on_light_data")
+    )
     out = {
         "brand_name": str(row.get("brand_name") or ""),
         "agency_type": str(row.get("agency_type") or ""),
@@ -77,10 +92,10 @@ def _row_to_dict(row: dict, *, include_paths: bool = False) -> dict:
         "secondary_color": str(row.get("secondary_color") or "#000000"),
         "heading_font": str(row.get("heading_font") or ""),
         "body_font": str(row.get("body_font") or ""),
-        "has_logo_on_dark": bool(logo_dark and Path(str(logo_dark)).is_file()),
-        "has_logo_on_light": bool(logo_light and Path(str(logo_light)).is_file()),
-        "logo_on_dark_url": _logo_public_path("on-dark") if logo_dark else None,
-        "logo_on_light_url": _logo_public_path("on-light") if logo_light else None,
+        "has_logo_on_dark": has_dark,
+        "has_logo_on_light": has_light,
+        "logo_on_dark_url": _logo_public_path("on-dark") if has_dark else None,
+        "logo_on_light_url": _logo_public_path("on-light") if has_light else None,
         "updated_at": row["updated_at"].isoformat() if row.get("updated_at") else None,
     }
     if include_paths:
@@ -238,7 +253,8 @@ async def upload_brand_logo(
     dest = _brand_dir(client_id) / f"logo_{kind.replace('-', '_')}{ext}"
     dest.write_bytes(data)
 
-    col = "logo_on_dark_path" if kind == "on-dark" else "logo_on_light_path"
+    path_col = "logo_on_dark_path" if kind == "on-dark" else "logo_on_light_path"
+    data_col = "logo_on_dark_data" if kind == "on-dark" else "logo_on_light_data"
     now = datetime.now(UTC)
     exists = (
         await session.execute(
@@ -248,8 +264,11 @@ async def upload_brand_logo(
     ).first()
     if exists:
         await session.execute(
-            text(f"UPDATE rp_gbp_brand_kit SET {col} = :path, updated_at = :now WHERE client_id = :cid"),
-            {"path": str(dest), "now": now, "cid": str(client_id)},
+            text(
+                f"UPDATE rp_gbp_brand_kit SET {path_col} = :path, {data_col} = :img,"
+                " updated_at = :now WHERE client_id = :cid"
+            ),
+            {"path": str(dest), "img": data, "now": now, "cid": str(client_id)},
         )
     else:
         profile = await _get_client_profile(session, client_id)
@@ -257,9 +276,9 @@ async def upload_brand_logo(
             text(
                 f"""
                 INSERT INTO rp_gbp_brand_kit
-                  (client_id, brand_name, agency_type, {col}, updated_at)
+                  (client_id, brand_name, agency_type, {path_col}, {data_col}, updated_at)
                 VALUES
-                  (:cid, :name, :agency, :path, :now)
+                  (:cid, :name, :agency, :path, :img, :now)
                 """
             ),
             {
@@ -267,6 +286,7 @@ async def upload_brand_logo(
                 "name": str(profile.get("business_name") or "")[:120],
                 "agency": str(profile.get("primary_keyword") or "")[:120],
                 "path": str(dest),
+                "img": data,
                 "now": now,
             },
         )
@@ -280,19 +300,37 @@ async def get_brand_logo_path(session: AsyncSession, client_id: UUID, kind: str)
     if kind not in ("on-dark", "on-light"):
         raise HTTPException(status_code=400, detail="Invalid logo kind")
     await _ensure_brand_kit_table(session)
-    col = "logo_on_dark_path" if kind == "on-dark" else "logo_on_light_path"
+    path_col = "logo_on_dark_path" if kind == "on-dark" else "logo_on_light_path"
+    data_col = "logo_on_dark_data" if kind == "on-dark" else "logo_on_light_data"
     row = (
         await session.execute(
-            text(f"SELECT {col} AS path FROM rp_gbp_brand_kit WHERE client_id = :cid"),
+            text(f"SELECT {path_col} AS path, {data_col} AS img_data FROM rp_gbp_brand_kit WHERE client_id = :cid"),
             {"cid": str(client_id)},
         )
     ).mappings().first()
-    if not row or not row.get("path"):
+    if not row or (not row.get("path") and not row.get("img_data")):
         raise HTTPException(status_code=404, detail="Logo not uploaded yet")
-    path = Path(str(row["path"]))
-    if not path.is_file():
-        raise HTTPException(status_code=404, detail="Logo file missing on server")
-    return path
+
+    path_str = row.get("path")
+    path = Path(str(path_str)) if path_str else None
+
+    # File present on disk — serve directly
+    if path and path.is_file():
+        return path
+
+    # Re-hydrate disk from DB bytes (Railway-safe — survives restarts)
+    img_bytes = row.get("img_data")
+    if img_bytes:
+        if path is None:
+            path = _brand_dir(client_id) / f"logo_{kind.replace('-', '_')}.png"
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(bytes(img_bytes))
+            return path
+        except Exception:
+            pass
+
+    raise HTTPException(status_code=404, detail="Logo file missing on server")
 
 
 async def apply_brand_kit_to_image(

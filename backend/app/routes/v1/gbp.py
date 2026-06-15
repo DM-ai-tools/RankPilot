@@ -449,21 +449,26 @@ async def api_upload_brand_logo(
 async def api_get_brand_logo_file(
     kind: str,
     client_id: TokenClientId,
-) -> FileResponse:
-    """Serve brand logo from disk — no DB session (DbSession requires Bearer header). Supports ?token=."""
-    import pathlib
-
+):
+    """Serve brand logo — disk first, then DB bytes (Railway-safe). Supports ?token=."""
     from fastapi import HTTPException
+    from fastapi.responses import Response
+    from sqlalchemy import text
+
+    from app.db.session import session_maker
+    from app.services.gbp_brand_kit_service import get_brand_logo_path
 
     if kind not in ("on-dark", "on-light"):
         raise HTTPException(status_code=400, detail="Logo kind must be on-dark or on-light")
-    prefix = f"logo_{kind.replace('-', '_')}"
-    base = pathlib.Path("uploads/gbp/brandkit") / str(client_id)
-    for ext in (".png", ".jpg", ".jpeg", ".webp"):
-        p = base / f"{prefix}{ext}"
-        if p.is_file():
-            return FileResponse(str(p))
-    raise HTTPException(status_code=404, detail="Logo file not found")
+
+    async with session_maker()() as session:
+        await session.execute(
+            text("SELECT set_config('app.client_id', :cid, true)"),
+            {"cid": str(client_id)},
+        )
+        path = await get_brand_logo_path(session, client_id, kind)
+
+    return FileResponse(str(path))
 
 
 # ── Activity (legacy stub) ────────────────────────────────────────────────────
