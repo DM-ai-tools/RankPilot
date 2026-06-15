@@ -253,7 +253,7 @@ function PublishedPostCtaUpdater({ postId }: { postId: string }) {
             <option key={v} value={v}>{l}</option>
           ))}
         </select>
-        {ctaType !== "CALL" ? (
+        {ctaType !== "CALL" && (
           <input
             type="url"
             value={ctaUrl}
@@ -261,14 +261,11 @@ function PublishedPostCtaUpdater({ postId }: { postId: string }) {
             className="flex-1 min-w-[180px] rounded-md border border-rp-border bg-white px-2 py-1 text-[12px] text-navy outline-none focus:ring-1 focus:ring-[#34A853]"
             placeholder="https://example.com"
           />
-        ) : (
-          <input
-            type="tel"
-            value={ctaPhone}
-            onChange={(e) => setCtaPhone(e.target.value)}
-            className="flex-1 min-w-[140px] rounded-md border border-rp-border bg-white px-2 py-1 text-[12px] text-navy outline-none focus:ring-1 focus:ring-[#34A853]"
-            placeholder="+61370209120"
-          />
+        )}
+        {ctaType === "CALL" && (
+          <span className="flex-1 text-[11px] text-rp-tlight italic">
+            Google will use your listing's phone number automatically
+          </span>
         )}
         <Button
           size="sm"

@@ -295,11 +295,8 @@ async def api_update_gbp_post_cta(
     if not btn or btn == "NONE":
         raise HTTPException(status_code=400, detail="Select a CTA button type")
     cta: dict = {"actionType": btn}
-    if btn == "CALL":
-        phone = (req.cta_button_phone or "").strip()
-        if phone:
-            cta["phoneNumber"] = phone
-    else:
+    # GBP callToAction only supports `url` — CALL uses the listing phone automatically
+    if btn != "CALL":
         url = (req.cta_button_url or "").strip()
         if url:
             cta["url"] = url if url.startswith("http") else f"https://{url}"
