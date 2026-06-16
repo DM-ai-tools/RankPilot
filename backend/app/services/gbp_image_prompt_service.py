@@ -205,18 +205,35 @@ def build_gbp_post_image_prompt(
     composition = composition or random.choice(COMPOSITION_VARIANTS)
     visual_hook = _derive_visual_hook(primary_kw, theme, post_body, archetype)
     logo_bg = backdrop_for_archetype(archetype)
+    has_uploaded_logo = bool(brand.get("has_logo_on_dark") or brand.get("has_logo_on_light"))
     logo_zone = (
-        "Keep the top-left corner clean, bright white or very light — no busy detail "
-        "(a dark/black Clicktrends logo will be placed here after generation)."
+        "Reserve the top-left ~15% of the frame as plain empty negative space — bright white wall, "
+        "soft sky, or clean blur only. No objects, people, text, symbols, icons, or branding in this zone."
         if logo_bg == "light"
         else
-        "Keep the top-left corner clean, dark navy or charcoal — no busy detail "
-        "(a white Clicktrends logo will be placed here after generation)."
+        "Reserve the top-left ~15% of the frame as plain empty negative space — dark navy/charcoal "
+        "surface only. No objects, people, text, symbols, icons, or branding in this zone."
+    )
+    branding_rules = (
+        f"- NEVER render the business name \"{bname}\", any company logo, wordmark, signage, "
+        f"watermark, or brand icon anywhere in the image"
+        + (
+            " — the client's real logo is added automatically after generation; "
+            "the photo must stay completely logo-free and text-free"
+            if has_uploaded_logo
+            else ""
+        )
+        + "\n"
     )
 
     area_clause = f" in {area}" if area else ""
+    subject_line = (
+        f"Create a unique, professional Google Business Profile post photo for a {primary_kw} business{area_clause}."
+        if has_uploaded_logo
+        else f"Create a unique, professional Google Business Profile post photo for {bname}, a {primary_kw} business{area_clause}."
+    )
     prompt = f"""
-Create a unique, professional Google Business Profile post photo for {bname}, a {primary_kw} business{area_clause}.
+{subject_line}
 
 CORE KEYWORD (the image MUST clearly relate to this service/topic):
 "{primary_kw}"
@@ -237,7 +254,7 @@ COMPOSITION:
 - Logo placement zone: {logo_zone}
 
 STRICT RULES:
-- NO text, words, letters, logos, watermarks, or UI mockups anywhere in the image
+{branding_rules}- NO text, words, letters, logos, watermarks, or UI mockups anywhere in the image
 - NO stock-photo clichés: no generic globe, rocket, handshake-in-sunset, or laptop-on-desk-only shots
 - NO repeated generic marketing template look — this must feel like a bespoke photo shoot
 - Scene must be unmistakably about "{primary_kw}" — a viewer should guess the service from the image alone

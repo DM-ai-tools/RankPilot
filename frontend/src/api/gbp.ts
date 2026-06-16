@@ -131,8 +131,16 @@ export function gbpListingDescription(
 
 // ── Posts ─────────────────────────────────────────────────────────────────────
 
-export const generateGbpPosts = (count: number, prompt: string | null): Promise<Record<string, unknown>> =>
-  apiPostJson("/api/v1/gbp/posts/generate", { count, prompt });
+export const generateGbpPosts = (
+  count: number,
+  prompt: string | null,
+  targetKeywords?: string[],
+): Promise<Record<string, unknown>> =>
+  apiPostJson("/api/v1/gbp/posts/generate", {
+    count,
+    prompt,
+    target_keywords: targetKeywords?.length ? targetKeywords : undefined,
+  });
 
 export type GbpPostDirection = {
   direction: string;

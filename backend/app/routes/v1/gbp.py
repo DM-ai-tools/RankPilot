@@ -87,6 +87,7 @@ TokenClientId = Annotated[UUID, Depends(_client_id_or_token_param)]
 class GeneratePostsReq(BaseModel):
     count: int = 1
     prompt: str | None = None
+    target_keywords: list[str] | None = None
 
 
 class GeneratePostDirectionsReq(BaseModel):
@@ -158,7 +159,13 @@ async def api_generate_gbp_posts(
     client_id: CurrentClientId,
     session: DbSession,
 ) -> dict:
-    return await generate_gbp_posts(session, client_id, count=req.count, prompts_raw=req.prompt)
+    return await generate_gbp_posts(
+        session,
+        client_id,
+        count=req.count,
+        prompts_raw=req.prompt,
+        target_keywords=req.target_keywords,
+    )
 
 
 @router.post("/posts/generate-directions")

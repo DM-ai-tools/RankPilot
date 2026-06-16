@@ -55,7 +55,15 @@ def test_empty_prompt_uses_ahrefs_fallback():
     assert image_theme is None
 
 
-def test_unknown_short_phrase_treated_as_keyword():
+def test_researched_keyword_not_in_ahrefs_list():
+    kw, direction, image_theme = _resolve_target_keyword_from_prompt(
+        "seo specialist melbourne",
+        AHREFS,
+        AHREFS[0],
+    )
+    assert kw == "seo specialist melbourne"
+    assert direction is None
+    assert image_theme is None
     kw, direction, image_theme = _resolve_target_keyword_from_prompt(
         "custom local seo phrase",
         AHREFS,

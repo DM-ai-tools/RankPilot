@@ -39,8 +39,11 @@ def test_build_prompt_logo_zone_light_archetype():
         business_name="Clicktrends",
         archetype="SOCIAL_PROOF",
         post_index=1,
+        brand_config={"has_logo_on_light": True},
     )
-    assert "top-left corner clean, bright white" in prompt.lower()
+    assert "top-left" in prompt.lower()
+    assert "logo will be placed" not in prompt.lower()
+    assert "never render the business name" in prompt.lower()
     assert meta["logo_background"] == "light"
 
 
@@ -50,8 +53,10 @@ def test_build_prompt_logo_zone_dark_archetype():
         business_name="Clicktrends",
         archetype="DATA_DRIVEN",
         post_index=1,
+        brand_config={"has_logo_on_dark": True},
     )
-    assert "top-left corner clean, dark navy" in prompt.lower()
+    assert "top-left" in prompt.lower()
+    assert "logo will be placed" not in prompt.lower()
     assert meta["logo_background"] == "dark"
 
     prompt, meta = build_gbp_post_image_prompt(

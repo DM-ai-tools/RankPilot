@@ -1811,10 +1811,11 @@ async def generate_gbp_post_directions(
         "- Open with: Create a unique, professional Google Business Profile post photo for {business}...\n"
         "- Include sections: CORE KEYWORD, VISUAL HOOK (vivid scene the viewer feels), CREATIVE ARCHETYPE, "
         "VISUAL DIRECTION (lighting, mood, props, people, environment), COMPOSITION (layout, camera angle, depth), "
-        "COLOUR MOOD, brand accent usage, logo placement zone (clean top-left for logo overlay)\n"
+        "COLOUR MOOD, brand accent usage, empty top-left negative space (plain background only — "
+        "never draw a logo or business name; real logo is added after generation)\n"
         "- Describe a specific photorealistic scene tied to the keyword — e.g. SEO: analytics dashboard glow, "
         "PPC: ad performance review, social: content planning on phone, local SEO: map visibility moment\n"
-        "- STRICT RULES block: NO text/words/logos/watermarks in image, NO stock clichés, photorealistic, "
+        "- STRICT RULES block: NO business name, NO logos, NO words/watermarks in image, NO stock clichés, photorealistic, "
         "square 1:1 friendly, unmistakably about the keyword service\n"
         "- Write like a senior creative director briefing a photographer — rich, cinematic, persuasive\n"
         "- post_angle = shorter copy direction for the text post (customer-facing marketing copy; "
@@ -1906,6 +1907,7 @@ async def generate_gbp_posts(
     *,
     count: int = 1,
     prompts_raw: str | None = None,
+    target_keywords: list[str] | None = None,
 ) -> dict:
     settings = get_settings()
     if not content_llm_available():
@@ -1955,6 +1957,11 @@ async def generate_gbp_posts(
     errors: list[str] = []
     keywords_used: list[str] = []
     batch_keywords_default = _pick_diverse_keywords(ahrefs_kws, post_count)
+    forced_keywords = [
+        re.sub(r"\s+", " ", k.strip())
+        for k in (target_keywords or [])
+        if (k or "").strip()
+    ]
     resolved_keywords: list[str] = []
     resolved_directions: list[str | None] = []
     resolved_image_themes: list[str | None] = []
@@ -1966,6 +1973,8 @@ async def generate_gbp_posts(
             ahrefs_kws,
             batch_keywords_default[i],
         )
+        if i < len(forced_keywords):
+            target_kw = forced_keywords[i]
         resolved_keywords.append(target_kw)
         resolved_directions.append(direction)
         resolved_image_themes.append(image_theme)

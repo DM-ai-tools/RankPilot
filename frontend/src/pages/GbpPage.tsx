@@ -217,7 +217,7 @@ function PublishedPostCtaUpdater({ postId }: { postId: string }) {
   const qc = useQueryClient();
   const [ctaType, setCtaType] = useState("LEARN_MORE");
   const [ctaUrl, setCtaUrl] = useState("https://clicktrends.com.au/contact-us/");
-  const [ctaPhone, setCtaPhone] = useState("+61370209120");
+  const [ctaPhone] = useState("+61370209120");
   const [note, setNote] = useState<string | null>(null);
 
   const update = useMutation({
@@ -309,7 +309,7 @@ function PostsTab({
 }: {
   d: GbpOverview;
   token: string | null;
-  onGenerate: (count: number, prompts: string) => void;
+  onGenerate: (count: number, prompts: string, targetKeywords?: string[]) => void;
   onApprove: (id: string, body: string, scheduledFor?: string) => void;
   onPublish: (id: string, body: string, cta?: { type: string; url?: string; phone?: string } | null) => void;
   onSaveDraft: (id: string, body: string) => void;
@@ -328,6 +328,7 @@ function PostsTab({
   const [selectedPostId, setSelectedPostId] = useState<string | null>(null);
   const [editBody, setEditBody] = useState("");
   const [prompts, setPrompts] = useState<string[]>(Array(10).fill(""));
+  const [slotTargetKeywords, setSlotTargetKeywords] = useState<string[]>(Array(10).fill(""));
   const [postCount, setPostCount] = useState(1);
   const [promptGenCount, setPromptGenCount] = useState(1);
   const [selectedPromptKws, setSelectedPromptKws] = useState<string[]>([]);
@@ -431,10 +432,13 @@ function PostsTab({
       generateGbpPostDirections(promptGenCount, selectedPromptKws),
     onSuccess: (data) => {
       const next = [...prompts];
+      const kwNext = [...slotTargetKeywords];
       for (let i = 0; i < data.prompts.length; i++) {
         next[i] = data.prompts[i]?.slot ?? "";
+        kwNext[i] = data.prompts[i]?.keyword ?? "";
       }
       setPrompts(next);
+      setSlotTargetKeywords(kwNext);
       setPostCount(data.count);
       setActivePromptIdx(0);
     },
@@ -761,14 +765,19 @@ function PostsTab({
                         const next = [...prompts];
                         next[activePromptIdx] = kw;
                         setPrompts(next);
+                        const kwNext = [...slotTargetKeywords];
+                        kwNext[activePromptIdx] = kw;
+                        setSlotTargetKeywords(kwNext);
                       }}
                       className={`rounded-full border px-2 py-0.5 text-[10px] font-medium transition active:scale-95 ${
-                        (prompts[activePromptIdx] ?? "").trim() === kw
+                        (slotTargetKeywords[activePromptIdx] ?? "").trim().toLowerCase() === kw.toLowerCase()
+                        || (prompts[activePromptIdx] ?? "").trim() === kw
                           ? "border-[#34A853] bg-[#E6F4EA] text-[#137333]"
                           : "border-[#C2E0FF] bg-white text-[#0050A0] hover:border-[#34A853] hover:bg-[#E6F4EA] hover:text-[#137333]"
                       }`}
                     >
-                      {(prompts[activePromptIdx] ?? "").trim() === kw ? "✓" : "+"} {kw}
+                      {(slotTargetKeywords[activePromptIdx] ?? "").trim().toLowerCase() === kw.toLowerCase()
+                        || (prompts[activePromptIdx] ?? "").trim() === kw ? "✓" : "+"} {kw}
                     </button>
                     );
                   })}
@@ -786,7 +795,11 @@ function PostsTab({
             disabled={busy}
             onClick={() => {
               const raw = prompts.slice(0, postCount).join("\n<<<POST_SLOT>>>\n");
-              onGenerate(postCount, raw.trim() ? raw : "");
+              const kws = slotTargetKeywords
+                .slice(0, postCount)
+                .map((k) => k.trim())
+                .filter(Boolean);
+              onGenerate(postCount, raw.trim() ? raw : "", kws.length > 0 ? kws : undefined);
             }}
           >
             {busy
@@ -969,7 +982,17 @@ function PostsTab({
                       size="sm"
                       variant="outline"
                       disabled={busy}
-                      onClick={() => onGenerate(1, prompts[0]?.trim() ?? "")}
+                      onClick={() => {
+                        const regenKw =
+                          slotTargetKeywords[0]?.trim() ||
+                          draft?.target_keyword?.trim() ||
+                          "";
+                        onGenerate(
+                          1,
+                          prompts[0]?.trim() ?? "",
+                          regenKw ? [regenKw] : undefined,
+                        );
+                      }}
                     >
                       Regenerate
                     </Button>
@@ -2271,8 +2294,15 @@ export function GbpPage() {
   const [publishPostNote, setPublishPostNote] = useState<string | null>(null);
 
   const generatePost = useMutation({
-    mutationFn: ({ count, prompts }: { count: number; prompts: string }) =>
-      generateGbpPosts(count, prompts || null),
+    mutationFn: ({
+      count,
+      prompts,
+      targetKeywords,
+    }: {
+      count: number;
+      prompts: string;
+      targetKeywords?: string[];
+    }) => generateGbpPosts(count, prompts || null, targetKeywords),
     onSuccess: (data) => {
       void qc.invalidateQueries({ queryKey: ["gbp"] });
       void qc.invalidateQueries({ queryKey: ["me", "gbp-scope"] });
@@ -2500,7 +2530,9 @@ export function GbpPage() {
                 busy={busy}
                 saveDraftPending={savePostDraft.isPending}
                 syncPostsPending={syncPosts.isPending}
-                onGenerate={(count, prompts) => void generatePost.mutate({ count, prompts })}
+                onGenerate={(count, prompts, targetKeywords) =>
+                  void generatePost.mutate({ count, prompts, targetKeywords })
+                }
                 onSaveDraft={(id, body) => void savePostDraft.mutate({ id, body })}
                 onApprove={(id, body, scheduledFor) =>
                   void approvePost.mutate({ id, body, scheduledFor })
