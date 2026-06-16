@@ -7,7 +7,7 @@ from datetime import date
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, File, Form, Query, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse, Response
 from pydantic import BaseModel
 
@@ -36,6 +36,7 @@ from app.services.gbp_photos_service import (
     upload_gbp_photo,
 )
 from app.services.gbp_service import (
+    build_gbp_call_to_action,
     delete_gbp_post,
     generate_gbp_description,
     generate_gbp_post_directions,
@@ -247,18 +248,11 @@ async def api_update_gbp_post(
     client_id: CurrentClientId,
     session: DbSession,
 ) -> dict:
-    cta: dict | None = None
-    btn = (req.cta_button_type or "").strip().upper()
-    if btn and btn != "NONE":
-        cta = {"actionType": btn}
-        if btn == "CALL":
-            phone = (req.cta_button_phone or "").strip()
-            if phone:
-                cta["phoneNumber"] = phone
-        else:
-            url = (req.cta_button_url or "").strip()
-            if url:
-                cta["url"] = url if url.startswith("http") else f"https://{url}"
+    cta = build_gbp_call_to_action(
+        req.cta_button_type,
+        url=req.cta_button_url,
+        phone=req.cta_button_phone,
+    )
     return await update_gbp_post(
         session, client_id, post_id,
         status=req.status, body=req.body, scheduled_for=req.scheduled_for,
@@ -273,18 +267,11 @@ async def api_publish_gbp_post(
     client_id: CurrentClientId,
     session: DbSession,
 ) -> dict:
-    cta: dict | None = None
-    btn = (req.cta_button_type or "").strip().upper()
-    if btn and btn != "NONE":
-        cta = {"actionType": btn}
-        if btn == "CALL":
-            phone = (req.cta_button_phone or "").strip()
-            if phone:
-                cta["phoneNumber"] = phone
-        else:
-            url = (req.cta_button_url or "").strip()
-            if url:
-                cta["url"] = url if url.startswith("http") else f"https://{url}"
+    cta = build_gbp_call_to_action(
+        req.cta_button_type,
+        url=req.cta_button_url,
+        phone=req.cta_button_phone,
+    )
     return await publish_gbp_queue_post(
         session, client_id, post_id, post_body_override=req.body, cta_button=cta
     )
@@ -298,15 +285,13 @@ async def api_update_gbp_post_cta(
     session: DbSession,
 ) -> dict:
     """PATCH a live GBP post to add/change its CTA button without re-publishing."""
-    btn = (req.cta_button_type or "").strip().upper()
-    if not btn or btn == "NONE":
+    cta = build_gbp_call_to_action(
+        req.cta_button_type,
+        url=req.cta_button_url,
+        phone=req.cta_button_phone,
+    )
+    if not cta:
         raise HTTPException(status_code=400, detail="Select a CTA button type")
-    cta: dict = {"actionType": btn}
-    # GBP callToAction only supports `url` — CALL uses the listing phone automatically
-    if btn != "CALL":
-        url = (req.cta_button_url or "").strip()
-        if url:
-            cta["url"] = url if url.startswith("http") else f"https://{url}"
     return await update_gbp_post_cta(session, client_id, post_id, cta)
 
 

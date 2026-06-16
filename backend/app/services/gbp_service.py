@@ -30,6 +30,53 @@ from app.services.gbp_photos_service import list_gbp_photos
 
 logger = logging.getLogger(__name__)
 
+_GBP_CTA_LABELS = {
+    "BOOK": "Book",
+    "ORDER": "Order online",
+    "SHOP": "Buy",
+    "LEARN_MORE": "Learn more",
+    "SIGN_UP": "Sign up",
+    "CALL": "Call now",
+}
+
+
+def build_gbp_call_to_action(
+    btn: str | None,
+    *,
+    url: str | None = None,
+    phone: str | None = None,
+) -> dict | None:
+    """Build a CTA dict from UI fields. `phone` is accepted for display only — never sent to Google."""
+    _ = phone  # kept for API compatibility / future DB storage
+    action = (btn or "").strip().upper()
+    if not action or action == "NONE":
+        return None
+    cta: dict[str, str] = {"actionType": action}
+    if action == "CALL":
+        # Google dials the GBP listing phone — phoneNumber is not a valid API field.
+        return cta
+    url_str = (url or "").strip()
+    if url_str:
+        cta["url"] = url_str if url_str.startswith("http") else f"https://{url_str}"
+    return cta
+
+
+def google_gbp_call_to_action(cta: dict | None) -> dict | None:
+    """Strip invalid fields before sending callToAction to the Google GBP API."""
+    if not cta or not cta.get("actionType"):
+        return None
+    action = str(cta["actionType"]).strip().upper()
+    if not action or action == "NONE":
+        return None
+    out: dict[str, str] = {"actionType": action}
+    if action == "CALL":
+        return out
+    url = str(cta.get("url") or "").strip()
+    if url:
+        out["url"] = url if url.startswith("http") else f"https://{url}"
+    return out
+
+
 GBP_LOCATION_READ_MASK = (
     "title,profile,storefrontAddress,categories,websiteUri,regularHours,serviceItems"
 )
@@ -2204,7 +2251,9 @@ async def _publish_local_post_to_google(
     if media_source_url:
         body["media"] = [{"mediaFormat": "PHOTO", "sourceUrl": media_source_url}]
     if cta_button and cta_button.get("actionType"):
-        body["callToAction"] = cta_button
+        clean_cta = google_gbp_call_to_action(cta_button)
+        if clean_cta:
+            body["callToAction"] = clean_cta
     url = f"{GBP_V4_BASE}/{v4_parent}/localPosts"
     async with httpx.AsyncClient(timeout=60.0) as http:
         resp = await http.post(
@@ -2422,7 +2471,11 @@ async def update_gbp_post_cta(
     from app.routes.v1.integrations import _get_google_access_token
     token = await _get_google_access_token(session, client_id, "gbp")
 
-    patch_body: dict[str, Any] = {"callToAction": cta_button}
+    clean_cta = google_gbp_call_to_action(cta_button)
+    if not clean_cta:
+        raise HTTPException(status_code=400, detail="Invalid CTA button configuration")
+
+    patch_body: dict[str, Any] = {"callToAction": clean_cta}
     patch_url = f"{GBP_V4_BASE}/{gbp_post_name}"
     async with httpx.AsyncClient(timeout=30.0) as http:
         resp = await http.patch(
@@ -2440,10 +2493,7 @@ async def update_gbp_post_cta(
             detail=f"Google rejected the CTA update: {msg or resp.text[:200]}",
         )
 
-    action_label = {
-        "BOOK": "Book", "ORDER": "Order online", "SHOP": "Buy",
-        "LEARN_MORE": "Learn more", "SIGN_UP": "Sign up", "CALL": "Call now",
-    }.get(cta_button.get("actionType", ""), cta_button.get("actionType", ""))
+    action_label = _GBP_CTA_LABELS.get(clean_cta.get("actionType", ""), clean_cta.get("actionType", ""))
     return {"note": f"CTA button '{action_label}' added to your live GBP post."}
 
 
