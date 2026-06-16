@@ -12,7 +12,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from uuid6 import uuid7
 
 from app.core.config import get_settings
-from app.services.content_generation_service import _business_from_url, _call_claude, _claude_model, _get_client_profile
+from app.services.content_generation_service import (
+    _business_from_url,
+    _call_content_llm,
+    _claude_model,
+    _get_client_profile,
+    content_llm_available,
+)
 from app.services.gbp_service import GBP_POST_CHAR_LIMIT, normalize_gbp_post_body
 from app.services.gbp_brand_kit_service import get_brand_kit
 from app.services.keyword_research_service import fetch_suburb_keyword_research
@@ -24,8 +30,8 @@ WEEKS = 4
 
 async def generate_monthly_timeline(session: AsyncSession, client_id: UUID) -> dict:
     settings = get_settings()
-    if not settings.anthropic_api_key:
-        return {"error": "ANTHROPIC_API_KEY is not set in backend/.env"}
+    if not content_llm_available():
+        return {"error": "Set OPENROUTER_API_KEY or ANTHROPIC_API_KEY in backend/.env"}
 
     profile = await _get_client_profile(session, client_id)
     if not profile.get("business_name"):
@@ -111,8 +117,8 @@ async def generate_monthly_timeline(session: AsyncSession, client_id: UUID) -> d
         )
         try:
             post_body = normalize_gbp_post_body(
-                _call_claude(post_prompt, settings.anthropic_api_key, max_tokens=4096).strip(),
-                api_key=settings.anthropic_api_key,
+                _call_content_llm(post_prompt, max_tokens=4096).strip(),
+                auto_complete=True,
             )
         except Exception as exc:
             errors.append(f"Week {week} GBP post: {exc!s}")
@@ -201,7 +207,7 @@ async def generate_monthly_timeline(session: AsyncSession, client_id: UUID) -> d
             f"Return ONLY body text (no HTML)."
         )
         try:
-            page_body = _call_claude(page_prompt, settings.anthropic_api_key).strip()
+            page_body = _call_content_llm(page_prompt).strip()
         except Exception as exc:
             errors.append(f"Week {week} landing page: {exc!s}")
             page_body = ""

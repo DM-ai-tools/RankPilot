@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import re
 from datetime import UTC, datetime
@@ -9,10 +10,11 @@ from urllib.parse import urlparse
 from uuid import UUID
 
 import anthropic
+import httpx
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.config import get_settings
+from app.core.config import get_openrouter_api_key, get_openrouter_content_model, get_settings
 from app.data.au_suburbs import get_suburbs_for_metro
 
 logger = logging.getLogger(__name__)
@@ -57,6 +59,83 @@ def _claude_model() -> str:
     return (get_settings().anthropic_content_model or "claude-sonnet-4-6").strip()
 
 
+def content_llm_available() -> bool:
+    return bool(get_openrouter_api_key() or (get_settings().anthropic_api_key or "").strip())
+
+
+def _extract_openrouter_text(data: dict) -> str:
+    choices = data.get("choices")
+    if not isinstance(choices, list) or not choices:
+        return ""
+    first = choices[0] if isinstance(choices[0], dict) else {}
+    msg = first.get("message") if isinstance(first, dict) else None
+    if isinstance(msg, dict):
+        content = msg.get("content")
+        if isinstance(content, str):
+            return content.strip()
+        if isinstance(content, list):
+            parts: list[str] = []
+            for item in content:
+                if isinstance(item, dict):
+                    txt = item.get("text")
+                    if isinstance(txt, str) and txt.strip():
+                        parts.append(txt.strip())
+                elif isinstance(item, str) and item.strip():
+                    parts.append(item.strip())
+            if parts:
+                return " ".join(parts).strip()
+    txt = first.get("text") if isinstance(first, dict) else None
+    if isinstance(txt, str) and txt.strip():
+        return txt.strip()
+    return ""
+
+
+def _call_openrouter_sync(
+    prompt: str,
+    api_key: str,
+    *,
+    model: str,
+    max_tokens: int = 2048,
+    temperature: float | None = None,
+) -> str:
+    settings = get_settings()
+    payload: dict = {
+        "model": model,
+        "messages": [{"role": "user", "content": prompt}],
+        "max_tokens": max_tokens,
+    }
+    if temperature is not None:
+        payload["temperature"] = temperature
+    with httpx.Client(timeout=120) as http:
+        resp = http.post(
+            "https://openrouter.ai/api/v1/chat/completions",
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json",
+                "Accept": "application/json",
+                "HTTP-Referer": str(settings.google_redirect_base_url or "http://localhost:5173"),
+                "X-Title": "RankPilot Content",
+            },
+            json=payload,
+        )
+    if not resp.is_success:
+        detail = resp.text[:300]
+        with contextlib.suppress(Exception):
+            err = resp.json()
+            if isinstance(err, dict):
+                err_obj = err.get("error")
+                if isinstance(err_obj, dict):
+                    detail = str(err_obj.get("message") or detail)
+                else:
+                    detail = str(err_obj or detail)
+        raise RuntimeError(f"OpenRouter error ({resp.status_code}): {detail}")
+    data = resp.json()
+    content = _extract_openrouter_text(data if isinstance(data, dict) else {})
+    if not content:
+        raise RuntimeError("OpenRouter returned empty content.")
+    return content.strip()
+
+
 def _call_claude(
     prompt: str,
     api_key: str,
@@ -74,6 +153,31 @@ def _call_claude(
         kwargs["temperature"] = temperature
     msg = client.messages.create(**kwargs)
     return msg.content[0].text.strip()
+
+
+def _call_content_llm(
+    prompt: str,
+    *,
+    max_tokens: int = 2048,
+    temperature: float | None = None,
+) -> str:
+    """Prefer OpenRouter (Claude Sonnet); fall back to direct Anthropic API."""
+    or_key = get_openrouter_api_key()
+    if or_key:
+        return _call_openrouter_sync(
+            prompt,
+            or_key,
+            model=get_openrouter_content_model(),
+            max_tokens=max_tokens,
+            temperature=temperature,
+        )
+    settings = get_settings()
+    key = (settings.anthropic_api_key or "").strip()
+    if not key:
+        raise ValueError(
+            "Set OPENROUTER_API_KEY (recommended) or ANTHROPIC_API_KEY in backend/.env"
+        )
+    return _call_claude(prompt, key, max_tokens=max_tokens, temperature=temperature)
 
 
 def _business_from_url(url: str) -> str:
@@ -100,8 +204,8 @@ def _canon(s: str) -> str:
 
 async def generate_content_for_client(session: AsyncSession, client_id: UUID) -> dict:
     settings = get_settings()
-    if not settings.anthropic_api_key:
-        return {"error": "ANTHROPIC_API_KEY is not set in backend/.env"}
+    if not content_llm_available():
+        return {"error": "Set OPENROUTER_API_KEY or ANTHROPIC_API_KEY in backend/.env"}
 
     profile = await _get_client_profile(session, client_id)
     if not profile.get("business_name"):
@@ -159,7 +263,7 @@ async def generate_content_for_client(session: AsyncSession, client_id: UUID) ->
         )
         logger.info("Generating landing page for %s in %s", prompt_business or bname, suburb)
         try:
-            body = _call_claude(prompt, settings.anthropic_api_key)
+            body = _call_content_llm(prompt)
         except Exception as exc:  # noqa: BLE001
             logger.error("Claude error for %s: %s", suburb, exc)
             errors.append(f"{suburb}: {exc!s}")
@@ -210,7 +314,7 @@ async def generate_content_for_client(session: AsyncSession, client_id: UUID) ->
     )
     logger.info("Generating GBP description for %s", prompt_business or bname)
     try:
-        gbp_body = _call_claude(gbp_prompt, settings.anthropic_api_key).strip()
+        gbp_body = _call_content_llm(gbp_prompt).strip()
     except Exception as exc:  # noqa: BLE001
         logger.error("Claude GBP error: %s", exc)
         errors.append(f"GBP description: {exc!s}")
@@ -252,6 +356,6 @@ async def generate_content_for_client(session: AsyncSession, client_id: UUID) ->
         out["error"] = (
             errors[0]
             if errors
-            else "Claude returned no usable text — check ANTHROPIC_API_KEY and model name."
+            else "Model returned no usable text — check OPENROUTER_API_KEY and model name."
         )
     return out

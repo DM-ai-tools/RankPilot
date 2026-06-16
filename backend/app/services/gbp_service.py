@@ -20,9 +20,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import get_settings
 from app.lib.primary_keywords import parse_primary_keywords
 from app.services.content_generation_service import (
-    _call_claude,
+    _call_content_llm,
     _get_client_profile,
     _get_top_suburbs,
+    content_llm_available,
 )
 from app.services.gbp_brand_kit_service import get_brand_kit
 from app.services.gbp_photos_service import list_gbp_photos
@@ -1491,9 +1492,8 @@ async def _generate_one_gbp_post(
         "GBP post %d/%d — scope=%s area=%s keyword=%s",
         post_index, post_total, location_scope, location_full, target_keyword,
     )
-    raw_body = _call_claude(
+    raw_body = _call_content_llm(
         prompt,
-        settings.anthropic_api_key,
         max_tokens=4096,
         temperature=0.95,
     ).strip()
@@ -1506,7 +1506,7 @@ async def _generate_one_gbp_post(
         target_keyword=target_keyword,
         forbidden_names=forbidden_names,
     )
-    body = normalize_gbp_post_body(raw_body, api_key=settings.anthropic_api_key)
+    body = normalize_gbp_post_body(raw_body, auto_complete=True)
 
     image_note = ""
     photo_id = None
@@ -1908,8 +1908,11 @@ async def generate_gbp_posts(
     prompts_raw: str | None = None,
 ) -> dict:
     settings = get_settings()
-    if not (settings.anthropic_api_key or "").strip():
-        raise HTTPException(status_code=503, detail="ANTHROPIC_API_KEY is not configured.")
+    if not content_llm_available():
+        raise HTTPException(
+            status_code=503,
+            detail="OPENROUTER_API_KEY is not configured (set OPENROUTER_CONTENT_MODEL for Claude Sonnet).",
+        )
 
     post_count = max(1, min(int(count), 10))
     profile = await _get_client_profile(session, client_id)
@@ -2813,20 +2816,19 @@ def _strip_design_artifacts_from_post(text: str) -> str:
     return body.strip()
 
 
-def normalize_gbp_post_body(text: str, *, api_key: str | None = None) -> str:
+def normalize_gbp_post_body(text: str, *, auto_complete: bool = False) -> str:
     """Ensure GBP post fits 1,500 chars and ends on a complete sentence."""
     body = _strip_design_artifacts_from_post(text)
     body = _trim_gbp_post_to_limit(body)
     if _gbp_post_ends_complete(body):
         return body
-    if api_key:
+    if auto_complete and content_llm_available():
         try:
-            completed = _call_claude(
+            completed = _call_content_llm(
                 "Finish this Google Business Profile post: complete the cut-off last sentence "
                 f"and add a short call-to-action. Return the FULL post text only (max {GBP_POST_CHAR_LIMIT} "
                 "characters). Do not start over from scratch.\n\n"
                 f"{body}",
-                api_key,
                 max_tokens=2048,
             )
             body = _trim_gbp_post_to_limit(completed.strip())

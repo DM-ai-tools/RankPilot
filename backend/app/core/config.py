@@ -87,6 +87,10 @@ class Settings(BaseSettings):
         default="openai/gpt-4o-mini",
         validation_alias=AliasChoices("OPENROUTER_PROMPT_MODEL", "OPENAI_PROMPT_MODEL"),
     )
+    openrouter_content_model: str = Field(
+        default="anthropic/claude-sonnet-4",
+        validation_alias=AliasChoices("OPENROUTER_CONTENT_MODEL", "ANTHROPIC_CONTENT_MODEL"),
+    )
 
     # --- Runway (GBP AI images — Gemini / Nano Banana via Runway API) ---
     runwayml_api_key: str = Field(default="", validation_alias=AliasChoices("RUNWAYML_API_KEY", "RUNWAY_API_KEY"))
@@ -217,6 +221,16 @@ def get_openrouter_prompt_model() -> str:
     get_settings.cache_clear()
     raw = (get_settings().openrouter_prompt_model or "openai/gpt-4o-mini").strip()
     return raw if "/" in raw else f"openai/{raw}"
+
+
+def get_openrouter_content_model() -> str:
+    """Claude Sonnet via OpenRouter for GBP posts and landing-page copy."""
+    model = (get_settings().openrouter_content_model or "").strip()
+    if model:
+        return model if "/" in model else f"anthropic/{model}"
+    get_settings.cache_clear()
+    raw = (get_settings().openrouter_content_model or "anthropic/claude-sonnet-4").strip()
+    return raw if "/" in raw else f"anthropic/{raw}"
 
 
 def get_openai_api_key() -> str:
