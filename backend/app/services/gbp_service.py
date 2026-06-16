@@ -690,7 +690,60 @@ def _description_queue_slice(queue: list[dict]) -> tuple[list[dict], dict | None
     return descriptions, active
 
 
+async def _cleanup_multi_keyword_posts(session: AsyncSession, client_id: UUID) -> None:
+    """One-time cleanup: fix posts where target_keyword is a comma-joined list."""
+    rows = (
+        await session.execute(
+            text(
+                """
+                SELECT id, payload
+                FROM rp_content_queue
+                WHERE client_id = :cid
+                  AND content_type = 'gbp_post'
+                  AND payload->>'target_keyword' LIKE '%,%'
+                """
+            ),
+            {"cid": str(client_id)},
+        )
+    ).mappings().all()
+
+    for row in rows:
+        raw_payload = row["payload"]
+        payload = raw_payload if isinstance(raw_payload, dict) else {}
+        if isinstance(raw_payload, str):
+            try:
+                payload = json.loads(raw_payload)
+            except Exception:
+                continue
+        bad_kw = str(payload.get("target_keyword") or "")
+        if "," not in bad_kw:
+            continue
+        # Take the last comma-segment as the intended single keyword
+        parts = [p.strip() for p in bad_kw.split(",") if p.strip()]
+        fixed_kw = parts[-1] if parts else bad_kw
+        payload["target_keyword"] = fixed_kw
+        # Also fix tags list which may have the joined keyword embedded
+        tags = payload.get("tags") or []
+        payload["tags"] = [t for t in tags if "," not in str(t)] + [fixed_kw]
+        await session.execute(
+            text(
+                """
+                UPDATE rp_content_queue
+                SET payload = (CAST(:payload AS text))::jsonb, updated_at = now()
+                WHERE id = :id
+                """
+            ),
+            {"id": str(row["id"]), "payload": json.dumps(payload)},
+        )
+    if rows:
+        logger.info(
+            "GBP keyword cleanup: fixed %d posts with comma-joined target_keyword for client %s",
+            len(rows), client_id,
+        )
+
+
 async def get_gbp_overview(session: AsyncSession, client_id: UUID) -> dict:
+    await _cleanup_multi_keyword_posts(session, client_id)
     intg = await _gbp_integration(session, client_id)
     profile = await _get_client_profile(session, client_id)
     queue = await _queue_items(session, client_id)

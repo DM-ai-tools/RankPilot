@@ -52,9 +52,9 @@ export function formatApiError(err: unknown): string {
   return raw;
 }
 
-export async function apiGet<T>(path: string): Promise<T> {
+export async function apiGet<T>(path: string, init?: RequestInit): Promise<T> {
   const base = viteApiBase() || defaultBase;
-  const res = await fetch(`${base}${path}`, { headers: authHeaders() });
+  const res = await fetch(`${base}${path}`, { headers: authHeaders(), ...init });
   if (!res.ok) {
     signOutIfUnauthorized(res.status, path);
     const text = await res.text();

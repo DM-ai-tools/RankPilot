@@ -1,5 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { Check, Globe, Plus, Search, X } from "lucide-react";
+import { useState } from "react";
 
 import { formatApiError } from "../../api/client";
 import {
@@ -41,7 +42,7 @@ function positionTone(pos: number | null): string {
 
 export function CompetitorKeywordsOverview() {
   const [input, setInput] = useSessionState("rp.ahrefsSite.input", "");
-  const [activeTarget, setActiveTarget] = useSessionState("rp.ahrefsSite.target", "");
+  const [activeTarget, setActiveTarget] = useState("");
   const [country, setCountry] = useSessionState("rp.ahrefsSite.country", "au");
   const researched = useResearchedKeywords();
   const savedKeywords = new Set(researched.map((r) => r.keyword.toLowerCase()));
@@ -52,11 +53,14 @@ export function CompetitorKeywordsOverview() {
     enabled: Boolean(activeTarget.trim()),
     staleTime: 30 * 60_000,
     gcTime: 60 * 60_000,
-    retry: 1,
+    retry: 0,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
+    refetchOnMount: false,
   });
 
   const data: SiteKeywordsResponse | undefined = siteQ.data;
-  const loading = siteQ.isFetching;
+  const loading = siteQ.isFetching && siteQ.fetchStatus === "fetching";
   const keywords = data?.keywords ?? [];
 
   function handleAnalyze(e: React.FormEvent) {

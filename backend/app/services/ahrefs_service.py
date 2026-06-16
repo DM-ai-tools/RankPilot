@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 from typing import Any
 
@@ -15,7 +16,8 @@ logger = logging.getLogger(__name__)
 
 _BASE = "https://api.ahrefs.com/v3"
 # Batch suburb/rank lookups — no history (Ahrefs requires date range if history is requested).
-_OVERVIEW_SELECT_BASIC = "keyword,volume,difficulty,traffic_potential,cpc,global_volume,volume_monthly"
+_OVERVIEW_SELECT_MINIMAL = "keyword,volume,difficulty"
+_OVERVIEW_SELECT_BASIC = "keyword,volume,difficulty,traffic_potential,cpc,global_volume"
 _OVERVIEW_SELECT_WITH_HISTORY = f"{_OVERVIEW_SELECT_BASIC},volume_monthly_history"
 _MATCHING_SELECT = "keyword,volume,difficulty,traffic_potential,cpc,global_volume"
 
@@ -75,7 +77,14 @@ class AhrefsClient:
     async def aclose(self) -> None:
         await self._http.aclose()
 
-    async def _get(self, path: str, params: dict[str, Any], *, max_retries: int = 3) -> dict[str, Any]:
+    async def _get(
+        self,
+        path: str,
+        params: dict[str, Any],
+        *,
+        max_retries: int = 3,
+        request_timeout: float = 60.0,
+    ) -> dict[str, Any]:
         url = f"{_BASE}/{path.lstrip('/')}"
         for attempt in range(max_retries + 1):
             resp = await self._http.get(
@@ -85,6 +94,7 @@ class AhrefsClient:
                     "Authorization": f"Bearer {self._api_key}",
                     "Accept": "application/json",
                 },
+                timeout=request_timeout,
             )
             if resp.status_code == 429 and attempt < max_retries:
                 retry_after = resp.headers.get("Retry-After")
@@ -103,6 +113,20 @@ class AhrefsClient:
                 detail="Ahrefs API key rejected (401). Check AHREFS_API_KEY in backend/.env.",
             )
         if resp.status_code == 403:
+            detail = resp.text[:400]
+            with contextlib.suppress(Exception):
+                err_body = resp.json()
+                if isinstance(err_body, dict):
+                    detail = str(err_body.get("error") or detail)
+            low = detail.lower()
+            if "units limit" in low or "units left" in low or "api units" in low:
+                raise HTTPException(
+                    status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                    detail=(
+                        "Ahrefs API credits exhausted — your account has too few API units left "
+                        "for this request. Top up at ahrefs.com or wait for your monthly reset."
+                    ),
+                )
             raise HTTPException(
                 status_code=status.HTTP_502_BAD_GATEWAY,
                 detail="Ahrefs API access denied (403). Your plan may not include this endpoint.",
@@ -114,7 +138,7 @@ class AhrefsClient:
             )
         if not resp.is_success:
             detail = resp.text[:400]
-            with __import__("contextlib").suppress(Exception):
+            with contextlib.suppress(Exception):
                 detail = str(resp.json().get("error") or detail)
             raise HTTPException(
                 status_code=status.HTTP_502_BAD_GATEWAY,
@@ -212,6 +236,8 @@ class AhrefsClient:
         *,
         country: str = "au",
         include_history: bool = True,
+        max_retries: int = 1,
+        request_timeout: float = 60.0,
     ) -> dict[str, Any]:
         keyword = (keyword or "").strip()
         if not keyword:
@@ -221,14 +247,19 @@ class AhrefsClient:
         params: dict[str, Any] = {
             "country": country,
             "keywords": keyword,
-            "select": _OVERVIEW_SELECT_WITH_HISTORY if include_history else _OVERVIEW_SELECT_BASIC,
+            "select": _OVERVIEW_SELECT_MINIMAL if not include_history else _OVERVIEW_SELECT_WITH_HISTORY,
         }
         if include_history:
             end = date.today()
             start = end - timedelta(days=365)
             params["volume_monthly_date_from"] = start.isoformat()
             params["volume_monthly_date_to"] = end.isoformat()
-        data = await self._get("keywords-explorer/overview", params)
+        data = await self._get(
+            "keywords-explorer/overview",
+            params,
+            max_retries=max_retries,
+            request_timeout=request_timeout,
+        )
         rows = data.get("keywords") or []
         if isinstance(rows, list) and rows and isinstance(rows[0], dict):
             return self._normalize_row(rows[0])
@@ -241,6 +272,8 @@ class AhrefsClient:
         country: str = "au",
         limit: int = 30,
         terms: str = "all",
+        max_retries: int = 0,
+        request_timeout: float = 12.0,
     ) -> list[dict[str, Any]]:
         seed = (seed or "").strip()
         if not seed:
@@ -255,7 +288,12 @@ class AhrefsClient:
         }
         if terms == "questions":
             params["terms"] = "questions"
-        data = await self._get("keywords-explorer/matching-terms", params)
+        data = await self._get(
+            "keywords-explorer/matching-terms",
+            params,
+            max_retries=max_retries,
+            request_timeout=request_timeout,
+        )
         return self._rows_to_normalized(data)
 
     async def related_terms(
@@ -265,6 +303,8 @@ class AhrefsClient:
         country: str = "au",
         limit: int = 20,
         terms: str = "also_rank_for",
+        max_retries: int = 0,
+        request_timeout: float = 12.0,
     ) -> list[dict[str, Any]]:
         seed = (seed or "").strip()
         if not seed:
@@ -280,6 +320,8 @@ class AhrefsClient:
                 "terms": terms,
                 "view_for": "top_10",
             },
+            max_retries=max_retries,
+            request_timeout=request_timeout,
         )
         return self._rows_to_normalized(data)
 
@@ -289,6 +331,8 @@ class AhrefsClient:
         *,
         country: str = "au",
         limit: int = 20,
+        max_retries: int = 0,
+        request_timeout: float = 12.0,
     ) -> list[dict[str, Any]]:
         seed = (seed or "").strip()
         if not seed:
@@ -302,6 +346,8 @@ class AhrefsClient:
                 "limit": max(5, min(int(limit), 50)),
                 "order_by": "volume:desc",
             },
+            max_retries=max_retries,
+            request_timeout=request_timeout,
         )
         return self._rows_to_normalized(data)
 
@@ -375,6 +421,8 @@ class AhrefsClient:
         *,
         country: str | None = None,
         limit: int = 100,
+        max_retries: int = 0,
+        request_timeout: float = 15.0,
     ) -> list[dict[str, Any]]:
         """Site Explorer — organic keywords a competitor domain ranks for."""
         target = (target or "").strip()
@@ -392,7 +440,12 @@ class AhrefsClient:
         }
         if country:
             params["country"] = country.strip().lower()[:2]
-        data = await self._get("site-explorer/organic-keywords", params)
+        data = await self._get(
+            "site-explorer/organic-keywords",
+            params,
+            max_retries=max_retries,
+            request_timeout=request_timeout,
+        )
         rows = data.get("keywords") or []
         out: list[dict[str, Any]] = []
         if isinstance(rows, list):

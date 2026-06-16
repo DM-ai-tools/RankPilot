@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import asyncio
 import re
 from uuid import UUID
 
-from fastapi import HTTPException
+import httpx
+from fastapi import HTTPException, status
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -20,6 +22,7 @@ from app.services.ahrefs_cache_service import (
     build_cache_key,
     cache_timestamps_iso,
     get_ahrefs_cache,
+    get_ahrefs_cache_stale,
     set_ahrefs_cache,
 )
 from app.services.ahrefs_service import AhrefsClient
@@ -88,8 +91,28 @@ async def fetch_keyword_serp_competitors(
             return out
 
     client = AhrefsClient()
+    rows = []
     try:
         rows = await client.serp_overview(keyword, country=cc, top_positions=top_positions)
+    except HTTPException as exc:
+        # On rate-limit or plan error, return stale cache or soft message instead of hard error
+        if exc.status_code in (429, 502):
+            from app.services.ahrefs_cache_service import get_ahrefs_cache_stale
+            stale, fetched_at, expires_at = await get_ahrefs_cache_stale(session, cache_key)
+            if stale:
+                cached_at_s, expires_s = cache_timestamps_iso(fetched_at, expires_at)
+                out = KeywordSerpCompetitorsResponse.model_validate(stale)
+                out.from_cache = True
+                out.cached_at = cached_at_s
+                out.cache_expires_at = expires_s
+                out.message = "Ahrefs rate limit — showing cached results."
+                return out
+            return KeywordSerpCompetitorsResponse(
+                keyword=keyword,
+                message="Ahrefs rate limit — competitor data will load shortly. Reload in a minute.",
+                source="ahrefs",
+            )
+        raise
     finally:
         await client.aclose()
 
@@ -193,6 +216,46 @@ async def fetch_competitor_site_keywords(
     client = AhrefsClient()
     try:
         rows = await client.site_organic_keywords(domain, country=cc, limit=limit)
+    except HTTPException as exc:
+        if exc.status_code in (status.HTTP_429_TOO_MANY_REQUESTS, status.HTTP_502_BAD_GATEWAY):
+            stale, fetched_at, expires_at = await get_ahrefs_cache_stale(session, cache_key)
+            if stale:
+                cached_at_s, expires_s = cache_timestamps_iso(fetched_at, expires_at)
+                out = SiteKeywordsResponse.model_validate(stale)
+                out.from_cache = True
+                out.cached_at = cached_at_s
+                out.cache_expires_at = expires_s
+                out.message = "Ahrefs rate limit — showing cached keywords."
+                return out
+            return SiteKeywordsResponse(
+                target=domain,
+                country=cc,
+                country_label=_COUNTRY_LABELS.get(cc, cc.upper()),
+                message=(
+                    "Ahrefs rate limit — wait a minute and try again."
+                    if exc.status_code == status.HTTP_429_TOO_MANY_REQUESTS
+                    else str(exc.detail)
+                ),
+                source="ahrefs",
+            )
+        raise
+    except (asyncio.TimeoutError, httpx.TimeoutException):
+        stale, fetched_at, expires_at = await get_ahrefs_cache_stale(session, cache_key)
+        if stale:
+            cached_at_s, expires_s = cache_timestamps_iso(fetched_at, expires_at)
+            out = SiteKeywordsResponse.model_validate(stale)
+            out.from_cache = True
+            out.cached_at = cached_at_s
+            out.cache_expires_at = expires_s
+            out.message = "Ahrefs timed out — showing cached keywords."
+            return out
+        return SiteKeywordsResponse(
+            target=domain,
+            country=cc,
+            country_label=_COUNTRY_LABELS.get(cc, cc.upper()),
+            message="Ahrefs timed out — wait a minute and try again.",
+            source="ahrefs",
+        )
     finally:
         await client.aclose()
 

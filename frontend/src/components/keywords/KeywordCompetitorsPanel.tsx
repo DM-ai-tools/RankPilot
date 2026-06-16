@@ -43,7 +43,8 @@ function CompetitorDetail({ item, keyword }: { item: SerpCompetitorItem; keyword
     queryFn: () => fetchCompetitorSiteKeywords(item.domain),
     staleTime: 30 * 60_000,
     gcTime: 60 * 60_000,
-    retry: 1,
+    retry: 0,
+    refetchOnWindowFocus: false,
   });
 
   const topKeywords = (siteQ.data?.keywords ?? []).slice(0, 10);

@@ -206,7 +206,18 @@ export const fetchKeywordOverview = (
   const params = new URLSearchParams({ keyword });
   if (country) params.set("country", country);
   if (refresh) params.set("refresh", "true");
-  return apiGet<KeywordOverviewResponse>(`/api/v1/keywords/overview?${params.toString()}`);
+  const controller = new AbortController();
+  const timer = window.setTimeout(() => controller.abort(), 25_000);
+  return apiGet<KeywordOverviewResponse>(`/api/v1/keywords/overview?${params.toString()}`, {
+    signal: controller.signal,
+  }).catch((err: unknown) => {
+    if (err instanceof DOMException && err.name === "AbortError") {
+      throw new Error("Keyword lookup timed out — Ahrefs may be rate-limited. Wait a minute and try again.");
+    }
+    throw err;
+  }).finally(() => {
+    window.clearTimeout(timer);
+  });
 };
 
 export type SiteKeywordItem = {
@@ -323,5 +334,16 @@ export const fetchCompetitorSiteKeywords = (
   const params = new URLSearchParams({ target });
   if (country) params.set("country", country);
   if (refresh) params.set("refresh", "true");
-  return apiGet<SiteKeywordsResponse>(`/api/v1/keywords/site-keywords?${params.toString()}`);
+  const controller = new AbortController();
+  const timer = window.setTimeout(() => controller.abort(), 25_000);
+  return apiGet<SiteKeywordsResponse>(`/api/v1/keywords/site-keywords?${params.toString()}`, {
+    signal: controller.signal,
+  }).catch((err: unknown) => {
+    if (err instanceof DOMException && err.name === "AbortError") {
+      throw new Error("Competitor lookup timed out — Ahrefs may be rate-limited. Wait a minute and try again.");
+    }
+    throw err;
+  }).finally(() => {
+    window.clearTimeout(timer);
+  });
 };

@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { Check, HelpCircle, Plus, Search, X } from "lucide-react";
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 
 import { formatApiError } from "../../api/client";
 import { fetchKeywordOverview, formatKeywordVolume, type KeywordIdeaItem, type KeywordOverviewResponse } from "../../api/keywords";
@@ -167,17 +167,18 @@ type Props = {
 
 export function AhrefsKeywordOverview({ defaultKeyword = "" }: Props) {
   const [input, setInput] = useSessionState("rp.kwResearch.input", defaultKeyword);
-  const [activeKeyword, setActiveKeyword] = useSessionState("rp.kwResearch.active", "");
+  // Only search when user clicks Analyze — do not persist/auto-restore active keyword.
+  const [activeKeyword, setActiveKeyword] = useState("");
   const [country, setCountry] = useSessionState("rp.kwResearch.country", "au");
   const researched = useResearchedKeywords();
   const savedKeywords = new Set(researched.map((r) => r.keyword.toLowerCase()));
 
   useEffect(() => {
-    if (defaultKeyword && !activeKeyword && !input) {
+    if (defaultKeyword && !input) {
       setInput(defaultKeyword);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [defaultKeyword, activeKeyword]);
+  }, [defaultKeyword]);
 
   const overviewQ = useQuery({
     queryKey: ["keywords", "overview", activeKeyword, country],
@@ -185,11 +186,14 @@ export function AhrefsKeywordOverview({ defaultKeyword = "" }: Props) {
     enabled: Boolean(activeKeyword.trim()),
     staleTime: 30 * 60_000,
     gcTime: 60 * 60_000,
-    retry: 1,
+    retry: 0,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
+    refetchOnMount: false,
   });
 
   const data: KeywordOverviewResponse | undefined = overviewQ.data;
-  const loading = overviewQ.isFetching;
+  const loading = overviewQ.isFetching && overviewQ.fetchStatus === "fetching";
   const err = overviewQ.error;
   const m = data?.metrics;
 
@@ -199,7 +203,7 @@ export function AhrefsKeywordOverview({ defaultKeyword = "" }: Props) {
     if (data?.keyword && data.metrics) {
       addResearchedKeyword(data.keyword, data.metrics.volume);
     }
-  }, [data?.keyword, data?.metrics]);
+  }, [data?.keyword, data?.metrics?.volume]);
 
   function handleSearch(e: React.FormEvent) {
     e.preventDefault();

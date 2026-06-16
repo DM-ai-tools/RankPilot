@@ -472,8 +472,8 @@ async def fetch_suburb_keyword_research(
         )
         return result
     except HTTPException as exc:
+        stale, fetched_at, expires_at = await get_ahrefs_cache_stale(session, cache_key)
         if exc.status_code == status.HTTP_429_TOO_MANY_REQUESTS:
-            stale, fetched_at, expires_at = await get_ahrefs_cache_stale(session, cache_key)
             if stale:
                 cached_at_s, expires_s = cache_timestamps_iso(fetched_at, expires_at)
                 out = SuburbKeywordResearchResponse.model_validate(stale)
@@ -487,6 +487,23 @@ async def fetch_suburb_keyword_research(
                 metro_label=metro,
                 location_scope=scope,
                 message="Ahrefs rate limit — wait a minute and try again.",
+                source="none",
+            )
+        # 403 = endpoint not on current Ahrefs plan — return stale cache or soft message
+        if exc.status_code == status.HTTP_502_BAD_GATEWAY and "403" in str(exc.detail):
+            if stale:
+                cached_at_s, expires_s = cache_timestamps_iso(fetched_at, expires_at)
+                out = SuburbKeywordResearchResponse.model_validate(stale)
+                out.from_cache = True
+                out.cached_at = cached_at_s
+                out.cache_expires_at = expires_s
+                out.message = "Showing cached keywords (Ahrefs plan limit reached for live refresh)."
+                return out
+            return SuburbKeywordResearchResponse(
+                primary_keyword=primary,
+                metro_label=metro,
+                location_scope=scope,
+                message="Keyword refresh unavailable — your Ahrefs plan does not include this endpoint. Cached keywords will still be used for post generation.",
                 source="none",
             )
         raise

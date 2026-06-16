@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import asyncio
 import re
 from uuid import UUID
 
+import httpx
 from fastapi import HTTPException, status
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -25,6 +27,8 @@ from app.services.ahrefs_cache_service import (
 )
 from app.services.ahrefs_service import AhrefsClient, difficulty_label, format_volume_display, kd_short_label
 from app.services.keyword_lookup_service import _country_for_metro
+
+_OVERVIEW_LIVE_TIMEOUT_SEC = 25.0
 
 _COUNTRY_LABELS: dict[str, str] = {
     "au": "Australia",
@@ -137,81 +141,122 @@ def _kd_description(kd: int | None) -> str:
     return "Highly competitive — strong domain authority required."
 
 
-async def fetch_keyword_overview(
-    session: AsyncSession,
-    client_id: UUID,
+def _overview_from_stale(
+    stale: dict,
     *,
-    keyword: str,
-    country: str | None = None,
-    force_refresh: bool = False,
+    fetched_at,
+    expires_at,
+    message: str,
 ) -> KeywordOverviewResponse:
-    keyword = " ".join((keyword or "").split()).strip()
-    if not keyword:
-        raise HTTPException(status_code=400, detail="Enter a keyword to analyze.")
+    cached_at_s, expires_s = cache_timestamps_iso(fetched_at, expires_at)
+    out = KeywordOverviewResponse.model_validate(stale)
+    out.from_cache = True
+    out.cached_at = cached_at_s
+    out.cache_expires_at = expires_s
+    out.message = message
+    return out
 
-    if not get_ahrefs_api_key():
-        return KeywordOverviewResponse(
-            keyword=keyword,
-            message="Set AHREFS_API_KEY in backend/.env and restart the API.",
-            source="none",
-        )
 
-    profile = (
-        await session.execute(
-            text("SELECT metro_label FROM rp_clients WHERE client_id = :cid LIMIT 1"),
-            {"cid": str(client_id)},
-        )
-    ).mappings().first()
-    metro = str((profile or {}).get("metro_label") or "")
-    cc = (country or _country_for_metro(metro) or "au").strip().lower()[:2]
-    # v2: bypasses pre-relevance-filter cached responses
-    cache_key = build_cache_key("overview-v2", cc, keyword)
+async def _ahrefs_ideas_or_empty(client: AhrefsClient, coro):
+    """Run a secondary Ahrefs call; return [] on rate-limit/plan errors."""
+    try:
+        result = await coro
+        return result if result is not None else []
+    except HTTPException as exc:
+        if exc.status_code in (status.HTTP_429_TOO_MANY_REQUESTS, status.HTTP_502_BAD_GATEWAY):
+            return []
+        raise
+    except (asyncio.TimeoutError, TimeoutError, httpx.TimeoutException):
+        return []
 
-    if not force_refresh:
-        cached, fetched_at, expires_at = await get_ahrefs_cache(session, cache_key)
-        if cached:
-            cached_at_s, expires_s = cache_timestamps_iso(fetched_at, expires_at)
-            out = KeywordOverviewResponse.model_validate(cached)
-            out.from_cache = True
-            out.cached_at = cached_at_s
-            out.cache_expires_at = expires_s
-            return out
 
+async def _overview_from_ahrefs_live(
+    session: AsyncSession,
+    *,
+    client_id: UUID,
+    keyword: str,
+    cc: str,
+    cache_key: str,
+) -> KeywordOverviewResponse:
     client = AhrefsClient()
+    ideas_note: str | None = None
+    terms_match: list[dict] = []
+    questions: list[dict] = []
+    also_rank_for: list[dict] = []
+    also_talk_about: list[dict] = []
     try:
         try:
-            overview_row = await client.keyword_overview_one(keyword, country=cc)
-            terms_match = await client.matching_terms(keyword, country=cc, limit=25, terms="all")
-            questions = await client.matching_terms(keyword, country=cc, limit=15, terms="questions")
-            also_rank_for = await client.related_terms(
-                keyword, country=cc, limit=15, terms="also_rank_for"
+            overview_row = await client.keyword_overview_one(
+                keyword,
+                country=cc,
+                include_history=False,
+                max_retries=0,
+                request_timeout=12.0,
             )
-            also_talk_about = await client.related_terms(
-                keyword, country=cc, limit=15, terms="also_talk_about"
-            )
-            seed_terms = _seed_terms(keyword)
-            also_rank_for = _filter_relevant(also_rank_for, seed_terms)
-            also_talk_about = _filter_relevant(also_talk_about, seed_terms)
-            if not also_rank_for:
-                also_rank_for = _filter_relevant(
-                    await client.search_suggestions(keyword, country=cc, limit=12), seed_terms
-                )
         except HTTPException as exc:
-            if exc.status_code != status.HTTP_429_TOO_MANY_REQUESTS:
-                raise
+            if exc.status_code in (status.HTTP_429_TOO_MANY_REQUESTS, status.HTTP_502_BAD_GATEWAY):
+                stale, fetched_at, expires_at = await get_ahrefs_cache_stale(session, cache_key)
+                if stale:
+                    msg = (
+                        "Ahrefs rate limit — showing cached overview."
+                        if exc.status_code == status.HTTP_429_TOO_MANY_REQUESTS
+                        else "Showing cached overview (Ahrefs plan limit or API error)."
+                    )
+                    return _overview_from_stale(stale, fetched_at=fetched_at, expires_at=expires_at, message=msg)
+                return KeywordOverviewResponse(
+                    keyword=keyword,
+                    country=cc,
+                    country_label=_COUNTRY_LABELS.get(cc, cc.upper()),
+                    message=(
+                        "Ahrefs rate limit — wait a minute and try again."
+                        if exc.status_code == status.HTTP_429_TOO_MANY_REQUESTS
+                        else str(exc.detail)
+                    ),
+                    source="ahrefs",
+                )
+            raise
+        except httpx.TimeoutException:
             stale, fetched_at, expires_at = await get_ahrefs_cache_stale(session, cache_key)
             if stale:
-                cached_at_s, expires_s = cache_timestamps_iso(fetched_at, expires_at)
-                out = KeywordOverviewResponse.model_validate(stale)
-                out.from_cache = True
-                out.cached_at = cached_at_s
-                out.cache_expires_at = expires_s
-                out.message = "Ahrefs rate limit — showing cached overview. Try again in a minute."
-                return out
-            raise HTTPException(
-                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-                detail="Ahrefs rate limit — wait a minute and try again.",
-            ) from exc
+                return _overview_from_stale(
+                    stale,
+                    fetched_at=fetched_at,
+                    expires_at=expires_at,
+                    message="Ahrefs timed out — showing cached overview.",
+                )
+            return KeywordOverviewResponse(
+                keyword=keyword,
+                country=cc,
+                country_label=_COUNTRY_LABELS.get(cc, cc.upper()),
+                message="Ahrefs timed out — wait a minute and try again.",
+                source="ahrefs",
+            )
+
+        # Ideas in parallel — best-effort, never block the response for long.
+        seed_terms = _seed_terms(keyword)
+        terms_match, questions, also_rank_for, also_talk_about = await asyncio.gather(
+            _ahrefs_ideas_or_empty(
+                client, client.matching_terms(keyword, country=cc, limit=15, terms="all")
+            ),
+            _ahrefs_ideas_or_empty(
+                client, client.matching_terms(keyword, country=cc, limit=10, terms="questions")
+            ),
+            _ahrefs_ideas_or_empty(
+                client, client.related_terms(keyword, country=cc, limit=10, terms="also_rank_for")
+            ),
+            _ahrefs_ideas_or_empty(
+                client, client.related_terms(keyword, country=cc, limit=10, terms="also_talk_about")
+            ),
+        )
+        also_rank_for = _filter_relevant(also_rank_for, seed_terms)
+        also_talk_about = _filter_relevant(also_talk_about, seed_terms)
+        if not also_rank_for:
+            suggestions = await _ahrefs_ideas_or_empty(
+                client, client.search_suggestions(keyword, country=cc, limit=10)
+            )
+            also_rank_for = _filter_relevant(suggestions, seed_terms)
+        if not terms_match and not questions and not also_rank_for:
+            ideas_note = "Keyword metrics loaded; related keyword ideas skipped (Ahrefs rate limit)."
     finally:
         await client.aclose()
 
@@ -238,7 +283,7 @@ async def fetch_keyword_overview(
         also_rank_for=_dedupe_ideas(also_rank_for, exclude=keyword),
         also_talk_about=_dedupe_ideas(also_talk_about, exclude=keyword),
         source="ahrefs",
-        message=None,
+        message=ideas_note,
         from_cache=False,
     )
     await set_ahrefs_cache(
@@ -248,3 +293,73 @@ async def fetch_keyword_overview(
         client_id=client_id,
     )
     return response
+
+
+async def fetch_keyword_overview(
+    session: AsyncSession,
+    client_id: UUID,
+    *,
+    keyword: str,
+    country: str | None = None,
+    force_refresh: bool = False,
+) -> KeywordOverviewResponse:
+    keyword = " ".join((keyword or "").split()).strip()
+    if not keyword:
+        raise HTTPException(status_code=400, detail="Enter a keyword to analyze.")
+
+    if not get_ahrefs_api_key():
+        return KeywordOverviewResponse(
+            keyword=keyword,
+            message="Set AHREFS_API_KEY in backend/.env and restart the API.",
+            source="none",
+        )
+
+    ahrefs_src = "ahrefs"
+    profile = (
+        await session.execute(
+            text("SELECT metro_label FROM rp_clients WHERE client_id = :cid LIMIT 1"),
+            {"cid": str(client_id)},
+        )
+    ).mappings().first()
+    metro = str((profile or {}).get("metro_label") or "")
+    cc = (country or _country_for_metro(metro) or "au").strip().lower()[:2]
+    # v2: bypasses pre-relevance-filter cached responses
+    cache_key = build_cache_key("overview-v2", cc, keyword)
+
+    if not force_refresh:
+        cached, fetched_at, expires_at = await get_ahrefs_cache(session, cache_key)
+        if cached:
+            cached_at_s, expires_s = cache_timestamps_iso(fetched_at, expires_at)
+            out = KeywordOverviewResponse.model_validate(cached)
+            out.from_cache = True
+            out.cached_at = cached_at_s
+            out.cache_expires_at = expires_s
+            return out
+
+    try:
+        return await asyncio.wait_for(
+            _overview_from_ahrefs_live(
+                session,
+                client_id=client_id,
+                keyword=keyword,
+                cc=cc,
+                cache_key=cache_key,
+            ),
+            timeout=_OVERVIEW_LIVE_TIMEOUT_SEC,
+        )
+    except asyncio.TimeoutError:
+        stale, fetched_at, expires_at = await get_ahrefs_cache_stale(session, cache_key)
+        if stale:
+            return _overview_from_stale(
+                stale,
+                fetched_at=fetched_at,
+                expires_at=expires_at,
+                message="Ahrefs took too long — showing cached overview.",
+            )
+        return KeywordOverviewResponse(
+            keyword=keyword,
+            country=cc,
+            country_label=_COUNTRY_LABELS.get(cc, cc.upper()),
+            message="Ahrefs took too long — wait a minute and try again.",
+            source=ahrefs_src,
+        )
