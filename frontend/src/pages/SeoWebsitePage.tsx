@@ -930,7 +930,7 @@ export function SeoWebsitePage() {
                         !sbKeyword.trim() ||
                         (sbStructureMode === "manual" && !sbManualReady)
                       }
-                      onClick={() => void suburbGenMut.mutate()}
+                      onClick={() => void suburbGenMut.mutate(false)}
                     >
                       {suburbGenMut.isPending ? "Generating modules + images…" : "Generate suburb page"}
                     </Button>

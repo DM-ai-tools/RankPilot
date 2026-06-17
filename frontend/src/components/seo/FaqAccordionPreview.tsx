@@ -30,9 +30,9 @@ function faqTitleParts(heading: string): { before: string; accent: string; after
       after: raw.slice(match.index + match[0].length).trim(),
     };
   }
-  const words = raw.rsplit(" ", 1);
-  if (words.length === 2) {
-    return { before: words[0], accent: words[1], after: "" };
+  const lastSpace = raw.lastIndexOf(" ");
+  if (lastSpace !== -1) {
+    return { before: raw.slice(0, lastSpace), accent: raw.slice(lastSpace + 1), after: "" };
   }
   return { before: "", accent: raw, after: "" };
 }
