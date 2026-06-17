@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import random
 import re
 from typing import Any, Literal
+from uuid import UUID
 
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -170,11 +172,14 @@ def _derive_visual_hook(keyword: str, theme: str, post_body: str, archetype: str
     arch = AD_ARCHETYPES.get(archetype, {})
     theme_bit = re.sub(r"\s+", " ", (theme or "").strip())[:120]
     body_bit = re.sub(r"\s+", " ", (post_body or "").strip())[:160]
+    # Ignore internal role labels — they get rendered as literal text by image models.
+    if theme_bit and re.search(r"\b(hero|service)\s+local\s+service\b", theme_bit, re.I):
+        theme_bit = ""
     if theme_bit:
-        return f"Visualise the service moment for '{keyword}': {theme_bit}"
+        return f"Scene to photograph: {theme_bit}"
     if body_bit:
-        return f"Visualise this post theme for '{keyword}': {body_bit[:100]}"
-    return f"Visualise a compelling {keyword} service scene — {arch.get('colour_mood', 'professional')}"
+        return f"Scene inspired by this service context (do not render as text): {body_bit[:100]}"
+    return f"Professional {keyword} service scene — {arch.get('colour_mood', 'professional')} mood"
 
 
 def build_gbp_post_image_prompt(
@@ -215,22 +220,24 @@ def build_gbp_post_image_prompt(
         "surface only. No objects, people, text, symbols, icons, or branding in this zone."
     )
     branding_rules = (
-        f"- NEVER render the business name \"{bname}\", any company logo, wordmark, signage, "
-        f"watermark, or brand icon anywhere in the image"
+        "- NEVER render any company name, wordmark, signage, watermark, or brand icon anywhere in the image"
         + (
-            " — the client's real logo is added automatically after generation; "
-            "the photo must stay completely logo-free and text-free"
+            " — the client's real logo file is composited automatically after generation; "
+            "leave the top-left logo zone empty with no text or symbols"
             if has_uploaded_logo
             else ""
         )
         + "\n"
     )
+    forbidden = str(brand.get("forbidden_words") or "").strip()
+    if forbidden:
+        branding_rules += f"- FORBIDDEN in image (never render as text): {forbidden}\n"
 
     area_clause = f" in {area}" if area else ""
     subject_line = (
         f"Create a unique, professional Google Business Profile post photo for a {primary_kw} business{area_clause}."
         if has_uploaded_logo
-        else f"Create a unique, professional Google Business Profile post photo for {bname}, a {primary_kw} business{area_clause}."
+        else f"Create a unique, professional Google Business Profile post photo for a local {primary_kw} business{area_clause}."
     )
     prompt = f"""
 {subject_line}
@@ -254,7 +261,9 @@ COMPOSITION:
 - Logo placement zone: {logo_zone}
 
 STRICT RULES:
-{branding_rules}- NO text, words, letters, logos, watermarks, or UI mockups anywhere in the image
+{branding_rules}- ABSOLUTELY NO text, typography, letters, words, captions, labels, watermarks, or UI strings anywhere in the image — 100% text-free photo
+- Do NOT render the keyword "{primary_kw}", business name, or any English words as overlay or signage text
+- NO text, words, letters, logos, watermarks, or UI mockups anywhere in the image
 - NO stock-photo clichés: no generic globe, rocket, handshake-in-sunset, or laptop-on-desk-only shots
 - NO repeated generic marketing template look — this must feel like a bespoke photo shoot
 - Scene must be unmistakably about "{primary_kw}" — a viewer should guess the service from the image alone
@@ -304,7 +313,7 @@ async def load_recent_image_history(session: AsyncSession, client_id: str, *, li
                 """
                 SELECT prompt FROM rp_gbp_photos
                 WHERE client_id = :cid
-                  AND source IN ('gbp_post', 'runway')
+                  AND source IN ('gbp_post', 'runway', 'suburb_page')
                   AND prompt IS NOT NULL
                 ORDER BY created_at DESC
                 LIMIT :lim
@@ -422,4 +431,236 @@ async def build_runway_prompt_for_gbp_post(
     )
     meta["intent"] = intent
     meta["post_total"] = post_total
+    if len(prompt) > 1000:
+        prompt = prompt[:997].rstrip() + "..."
+    return prompt, meta
+
+
+# ── Suburb landing page images (Content Engine) ─────────────────────────────
+
+SUBURB_LANDING_SCENES: dict[str, list[str]] = {
+    "hero": [
+        "Wide shot of a premium Australian digital agency — strategist reviewing analytics on a monitor with blurred unreadable charts, cinematic navy lighting",
+        "Confident marketing consultant presenting local search growth to a business owner in a modern glass office, natural light",
+        "Overhead view of a creative team planning a local SEO campaign with notebooks and laptops, no readable screen text",
+        "Australian small-business owner smiling while reviewing website performance on tablet held at angle so screen is not readable",
+        "Sleek agency boardroom with city skyline through windows, single expert at desk with soft bokeh monitors",
+        "Dynamic low-angle shot of professional reviewing marketing dashboard, screens out of focus with no legible text",
+        "Bright collaborative workspace — diverse team discussing strategy around a table with laptops closed or screens angled away",
+        "Minimalist agency studio with plants and warm light, consultant gesturing at wall-mounted display showing abstract colour blocks only",
+    ],
+    "service": [
+        "Friendly SEO specialist explaining a strategy sketch on paper to a local tradie in a bright consultation room",
+        "Hands-on website audit moment — consultant and client reviewing a laptop from over-the-shoulder, screen not readable",
+        "Small retail shop owner meeting marketing expert at counter, authentic local business feel, warm daylight",
+        "Professional services firm reception — consultant welcoming client, clean trustworthy Australian office",
+        "Close-up of hands pointing at printed marketing report (blurred text) on desk with coffee, collaborative tone",
+        "E-commerce business owner on video call with agency strategist, dual screens angled away from camera",
+        "Local service van parked outside modern office — business owner shaking hands with digital marketer, suburban Australia",
+        "Team whiteboard session with colourful sticky notes and diagrams, no readable writing, energetic planning mood",
+    ],
+}
+
+
+def _scene_fingerprint(scene: str) -> str:
+    return re.sub(r"\s+", " ", (scene or "").strip().lower())[:80]
+
+
+def pick_suburb_landing_scene(
+    role: str,
+    *,
+    suburb: str,
+    keyword: str,
+    used_scenes: list[str] | None = None,
+    post_index: int = 1,
+) -> str:
+    """Pick a photorealistic scene description — never a text label for the model to render."""
+    pool = list(SUBURB_LANDING_SCENES.get(role, SUBURB_LANDING_SCENES["hero"]))
+    used_fps = {_scene_fingerprint(s) for s in (used_scenes or [])}
+    candidates = [s for s in pool if _scene_fingerprint(s) not in used_fps]
+    if not candidates:
+        candidates = pool
+    seed = f"{suburb}|{keyword}|{role}|{post_index}|{len(used_fps)}"
+    offset = int(hashlib.sha256(seed.encode()).hexdigest()[:8], 16) % len(candidates)
+    return candidates[offset]
+
+
+async def load_suburb_image_diversity_meta(
+    session: AsyncSession,
+    client_id: str,
+    *,
+    photo_ids: list[str] | None = None,
+    limit: int = 16,
+) -> dict[str, Any]:
+    """Load archetype/layout/scene history from recent suburb-page photos for variety."""
+    from app.services.suburb_page_history_service import get_recent_suburb_image_photo_ids  # noqa: PLC0415
+
+    ids = list(photo_ids or [])
+    if not ids:
+        ids = await get_recent_suburb_image_photo_ids(session, UUID(client_id), limit=limit)
+
+    general = await load_recent_image_history(session, client_id, limit=limit)
+    if not ids:
+        return {**general, "used_scenes": [], "used_compositions": [], "used_textures": []}
+
+    placeholders = ", ".join(f":id{i}" for i in range(len(ids)))
+    params: dict[str, Any] = {"cid": client_id}
+    for i, pid in enumerate(ids):
+        params[f"id{i}"] = pid
+
+    rows = (
+        await session.execute(
+            text(
+                f"""
+                SELECT prompt FROM rp_gbp_photos
+                WHERE client_id = :cid AND id::text IN ({placeholders})
+                ORDER BY created_at DESC
+                """
+            ),
+            params,
+        )
+    ).scalars().all()
+
+    archetypes: list[str] = []
+    layouts: list[str] = []
+    compositions: list[str] = []
+    textures: list[str] = []
+    scenes: list[str] = []
+    for raw in rows:
+        meta = decode_prompt_meta(str(raw or ""))
+        if meta.get("archetype"):
+            archetypes.append(str(meta["archetype"]))
+        if meta.get("layout"):
+            layouts.append(str(meta["layout"]))
+        if meta.get("composition"):
+            compositions.append(str(meta["composition"]))
+        if meta.get("texture"):
+            textures.append(str(meta["texture"]))
+        if meta.get("scene"):
+            scenes.append(str(meta["scene"]))
+
+    return {
+        "last_archetype": archetypes[0] if archetypes else general.get("last_archetype"),
+        "used_archetypes": archetypes + list(general.get("used_archetypes") or []),
+        "used_layouts": layouts + list(general.get("used_layouts") or []),
+        "used_compositions": compositions,
+        "used_textures": textures,
+        "used_scenes": scenes,
+        "generation_count": len(archetypes) + int(general.get("generation_count") or 0),
+    }
+
+
+async def build_runway_prompt_for_suburb_landing(
+    session: AsyncSession,
+    client_id: str,
+    *,
+    keyword: str,
+    business_name: str,
+    suburb: str = "",
+    metro: str = "",
+    role: str = "hero",
+    brand_config: dict[str, Any] | None = None,
+    post_index: int = 1,
+    post_total: int = 2,
+    prior_archetypes: list[str] | None = None,
+    recent_photo_ids: list[str] | None = None,
+) -> tuple[str, dict[str, Any]]:
+    """Build a text-free, scene-based Runway prompt for suburb landing page images."""
+    history = await load_suburb_image_diversity_meta(
+        session, client_id, photo_ids=recent_photo_ids
+    )
+    intent = infer_keyword_intent(keyword)
+    batch_used = list(prior_archetypes or [])
+    archetype = pick_archetype(
+        keyword=keyword,
+        intent=intent,
+        last_archetype=history.get("last_archetype"),
+        used_in_batch=batch_used + list(history.get("used_archetypes") or [])[:8],
+        post_index=post_index,
+    )
+
+    used_layouts = set(history.get("used_layouts") or [])
+    used_compositions = set(history.get("used_compositions") or [])
+    used_textures = set(history.get("used_textures") or [])
+
+    layout_pool = [l for l in LAYOUT_VARIANTS if l not in used_layouts] or LAYOUT_VARIANTS
+    texture_pool = [t for t in TEXTURE_VARIANTS if t not in used_textures] or TEXTURE_VARIANTS
+    composition_pool = [c for c in COMPOSITION_VARIANTS if c not in used_compositions] or COMPOSITION_VARIANTS
+
+    layout = random.choice(layout_pool)
+    texture = random.choice(texture_pool)
+    composition = random.choice(composition_pool)
+    scene = pick_suburb_landing_scene(
+        role,
+        suburb=suburb,
+        keyword=keyword,
+        used_scenes=list(history.get("used_scenes") or []),
+        post_index=post_index,
+    )
+
+    brand = brand_config or {}
+    primary_kw = (keyword or "local services").strip()
+    bname = (business_name or "local business").strip()
+    area = ", ".join(x for x in [(suburb or "").strip(), (metro or "").strip()] if x)
+    primary_colour = str(brand.get("primary_color") or "#2E8B7F").strip()
+    secondary_colour = str(brand.get("secondary_color") or "#1A1A2E").strip()
+    arch = AD_ARCHETYPES.get(archetype, AD_ARCHETYPES["SOCIAL_PROOF"])
+    logo_bg = backdrop_for_archetype(archetype)
+    has_uploaded_logo = bool(brand.get("has_logo_on_dark") or brand.get("has_logo_on_light"))
+    forbidden = str(brand.get("forbidden_words") or "").strip()
+    logo_zone = (
+        "Reserve top-left ~15% as plain empty negative space — bright blur only, no objects or text."
+        if logo_bg == "light"
+        else "Reserve top-left ~15% as plain dark negative space — no objects or text."
+    )
+
+    area_clause = f" in {area}" if area else ""
+    prompt = f"""
+Create a unique, photorealistic marketing photo for a local SEO landing page{area_clause}.
+Service context (do NOT render these words as text in the image): {primary_kw}
+
+SCENE TO PHOTOGRAPH (centrepiece — show this visually, never as written text):
+{scene}
+
+CREATIVE ARCHETYPE: {archetype}
+VISUAL DIRECTION: {arch["visual_direction"]}
+COLOUR MOOD: {arch["colour_mood"]}
+
+COMPOSITION:
+- Layout: {layout}
+- Background: {texture}
+- Camera/style: {composition}
+- Aspect: widescreen 16:9 landscape banner (not square — for website hero)
+- Brand accent colours: {primary_colour}, {secondary_colour} (subtle props/lighting only)
+- Logo zone: {logo_zone}
+
+STRICT RULES — CRITICAL:
+- ZERO text anywhere: no words, letters, captions, labels, watermarks, signage, or readable UI
+- Never render service keywords, suburb names, business names, or role labels as visible text
+- Monitors, phones, and documents must be angled or blurred so no text is legible
+- NO stock clichés: generic handshake sunset, globe, rocket, or laptop-only desk shot
+- Photorealistic Australian local-business marketing photography, widescreen 16:9 landscape (not square)
+- Image {post_index} of {post_total} — must look distinctly different from other suburb pages for this client
+- {"Real client logo is composited in post-production — top-left must stay empty, no words or fake logos" if has_uploaded_logo else "No company branding or wordmarks anywhere in the frame"}
+{f"- FORBIDDEN in image (never render as text): {forbidden}" if forbidden else ""}
+
+STYLE: High-end Australian digital agency photography — clean, trustworthy, bespoke.
+NOT: Canva template, meme text, or AI-generated words on the image.
+""".strip()
+
+    meta = {
+        "archetype": archetype,
+        "keyword": primary_kw,
+        "layout": layout,
+        "texture": texture,
+        "composition": composition,
+        "scene": scene,
+        "role": role,
+        "post_index": post_index,
+        "post_total": post_total,
+        "logo_background": logo_bg,
+        "source": "suburb_landing",
+    }
+    if len(prompt) > 1000:
+        prompt = prompt[:997].rstrip() + "..."
     return prompt, meta

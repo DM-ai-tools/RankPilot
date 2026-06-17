@@ -23,8 +23,12 @@ from uuid6 import uuid7
 from app.core.config import Settings, get_settings
 from app.services.content_generation_service import _get_client_profile
 from app.services.gbp_brand_kit_service import apply_brand_kit_to_image
-from app.services.gbp_image_prompt_service import build_runway_prompt_for_gbp_post, encode_prompt_meta
-from app.services.runway_service import RunwayService
+from app.services.gbp_image_prompt_service import (
+    build_runway_prompt_for_gbp_post,
+    build_runway_prompt_for_suburb_landing,
+    encode_prompt_meta,
+)
+from app.services.runway_service import RUNWAY_RATIO_GBP, RUNWAY_RATIO_WEBSITE, RunwayService
 
 logger = logging.getLogger(__name__)
 
@@ -53,6 +57,7 @@ _CATEGORY_ASPECT: dict[str, float] = {
     "PROFILE": 1.0,
 }
 _ASPECT_TOLERANCE = 0.06
+_WEBSITE_LANDSCAPE_ASPECT = 16 / 9
 
 _BACKEND_ROOT = Path(__file__).resolve().parent.parent.parent
 _UPLOAD_ROOT = _BACKEND_ROOT / "uploads" / "gbp"
@@ -173,6 +178,44 @@ def _prepare_image_for_category(file_path: Path, category: str) -> Path:
     except Exception:
         logger.warning("Could not prepare image for %s", category, exc_info=True)
         return file_path
+
+
+def _prepare_website_landscape_image(file_path: Path) -> None:
+    """Center-crop to 16:9 landscape for WordPress suburb/landing page images."""
+    target = _WEBSITE_LANDSCAPE_ASPECT
+    try:
+        from PIL import Image
+    except ImportError:
+        logger.warning("Pillow not installed; cannot crop website image to 16:9")
+        return
+
+    try:
+        with Image.open(file_path) as im:
+            im = im.convert("RGB") if im.mode not in ("RGB", "L") else im
+            w, h = im.size
+            if h == 0:
+                return
+            current = w / h
+            if abs(current - target) <= _ASPECT_TOLERANCE:
+                return
+            if current > target:
+                new_w = max(1, int(h * target))
+                left = (w - new_w) // 2
+                box = (left, 0, left + new_w, h)
+            else:
+                new_h = max(1, int(w / target))
+                top = (h - new_h) // 2
+                box = (0, top, w, top + new_h)
+            cropped = im.crop(box)
+            ext = file_path.suffix.lower()
+            if ext in (".jpg", ".jpeg"):
+                cropped.save(file_path, format="JPEG", quality=92)
+            elif ext == ".webp":
+                cropped.save(file_path, format="WEBP", quality=90)
+            else:
+                cropped.save(file_path, format="PNG")
+    except Exception:
+        logger.warning("Website landscape crop failed for %s", file_path, exc_info=True)
 
 
 def _publish_signature(photo_id: str, client_id: str, exp: int, secret: str) -> str:
@@ -482,7 +525,7 @@ async def generate_gbp_photo(
 
     runway = RunwayService()
     try:
-        result = await runway.text_to_image(runway_prompt)
+        result = await runway.text_to_image(runway_prompt, ratio=RUNWAY_RATIO_GBP)
     except ValueError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     except TimeoutError as exc:
@@ -588,7 +631,7 @@ async def generate_post_image_from_content(
     )
 
     try:
-        result = await runway.text_to_image(runway_prompt)
+        result = await runway.text_to_image(runway_prompt, ratio=RUNWAY_RATIO_GBP)
     except Exception as exc:
         logger.warning("Post image generation skipped: %s", exc)
         return None
@@ -668,12 +711,169 @@ async def generate_post_image_from_content(
             "img": img_bytes,
         },
     )
+    await session.flush()
+
+    preview_data_url: str | None = None
+    if dest.is_file():
+        try:
+            raw = dest.read_bytes()
+            if raw:
+                preview_data_url = "data:image/png;base64," + base64.b64encode(raw).decode("ascii")
+        except Exception:
+            pass
+    elif img_bytes:
+        preview_data_url = "data:image/png;base64," + base64.b64encode(img_bytes).decode("ascii")
+
     return {
         "photo_id": photo_id,
         "url": _photo_public_path(photo_id),
+        "preview_data_url": preview_data_url,
         "model": result.get("model"),
         "archetype": meta.get("archetype"),
         "keyword": kw,
+    }
+
+
+async def generate_suburb_landing_image(
+    session: AsyncSession,
+    client_id: UUID,
+    *,
+    business_name: str = "",
+    keyword: str = "",
+    suburb: str = "",
+    metro: str = "",
+    role: str = "hero",
+    brand_config: dict | None = None,
+    post_index: int = 1,
+    post_total: int = 2,
+    prior_archetypes: list[str] | None = None,
+    recent_photo_ids: list[str] | None = None,
+) -> dict | None:
+    """Generate a text-free Runway image for suburb landing pages."""
+    runway = RunwayService()
+    if not runway.configured():
+        return None
+
+    await _ensure_photos_table(session)
+    if brand_config is None:
+        from app.services.gbp_brand_kit_service import get_brand_kit  # noqa: PLC0415
+
+        brand_config = await get_brand_kit(session, client_id)
+    bname = (business_name or "local business").strip()
+    kw = (keyword or "services").strip()
+    area = (metro or "").strip()
+    suburb_clean = (suburb or "").strip()
+
+    runway_prompt, meta = await build_runway_prompt_for_suburb_landing(
+        session,
+        str(client_id),
+        keyword=kw,
+        business_name=bname,
+        suburb=suburb_clean,
+        metro=area,
+        role=role,
+        brand_config=brand_config,
+        post_index=post_index,
+        post_total=post_total,
+        prior_archetypes=prior_archetypes,
+        recent_photo_ids=recent_photo_ids,
+    )
+
+    try:
+        result = await runway.text_to_image(runway_prompt, ratio=RUNWAY_RATIO_WEBSITE)
+    except Exception as exc:
+        logger.warning("Suburb landing image generation skipped: %s", exc)
+        return None
+
+    urls = result.get("output_urls") or []
+    if not urls:
+        return None
+
+    photo_id = str(uuid7())
+    dest = _client_dir(client_id) / f"{photo_id}.png"
+    try:
+        async with httpx.AsyncClient(timeout=60.0, follow_redirects=True) as http:
+            img = await http.get(urls[0])
+            if not img.is_success:
+                return None
+            dest.write_bytes(img.content)
+    except Exception:
+        logger.warning("Suburb landing image download failed", exc_info=True)
+        return None
+
+    _prepare_website_landscape_image(dest)
+
+    # Content Engine (website / suburb landing) images are published WITHOUT a
+    # brand logo overlay — the plain photo alone is enough. Logo overlays are
+    # applied only to GBP photos/posts (see generate_gbp_photo).
+
+    runway_url = str(urls[0]).strip()
+    cdn_url: str | None = None
+    s = get_settings()
+    _freeimage_key = (s.freeimage_api_key or "").strip()
+    _imgbb_key = (s.imgbb_api_key or "").strip()
+    if dest.is_file() and (_freeimage_key or _imgbb_key):
+        try:
+            data = dest.read_bytes()
+            async with httpx.AsyncClient(timeout=60.0, follow_redirects=True) as _http:
+                if _freeimage_key:
+                    cdn_url = await _upload_freeimage(_http, data, _freeimage_key)
+                if not cdn_url and _imgbb_key:
+                    cdn_url = await _upload_imgbb(_http, data, _imgbb_key)
+        except Exception:
+            logger.warning("Could not upload suburb image to permanent CDN", exc_info=True)
+
+    ext_url_to_store = cdn_url or runway_url or None
+    img_bytes: bytes | None = None
+    if dest.is_file():
+        try:
+            img_bytes = dest.read_bytes()
+        except Exception:
+            pass
+
+    slot = "Suburb hero" if role == "hero" else "Suburb service"
+    await session.execute(
+        text(
+            """
+            INSERT INTO rp_gbp_photos
+                (id, client_id, source, prompt, storage_path, runway_task_id, slot_label, status,
+                 external_source_url, image_data)
+            VALUES
+                (:id, :cid, 'suburb_page', :prompt, :path, :task, :label, 'ready', :ext_url, :img)
+            """
+        ),
+        {
+            "id": photo_id,
+            "cid": str(client_id),
+            "prompt": encode_prompt_meta(meta, runway_prompt),
+            "path": str(dest),
+            "task": result.get("task_id"),
+            "label": slot,
+            "ext_url": ext_url_to_store,
+            "img": img_bytes,
+        },
+    )
+    await session.flush()
+
+    preview_data_url: str | None = None
+    if dest.is_file():
+        try:
+            raw = dest.read_bytes()
+            if raw:
+                preview_data_url = "data:image/png;base64," + base64.b64encode(raw).decode("ascii")
+        except Exception:
+            pass
+    elif img_bytes:
+        preview_data_url = "data:image/png;base64," + base64.b64encode(img_bytes).decode("ascii")
+
+    return {
+        "photo_id": photo_id,
+        "url": _photo_public_path(photo_id),
+        "preview_data_url": preview_data_url,
+        "model": result.get("model"),
+        "archetype": meta.get("archetype"),
+        "keyword": kw,
+        "scene": meta.get("scene"),
     }
 
 

@@ -228,3 +228,60 @@ async def ensure_rp_ahrefs_keyword_cache_table() -> None:
         )
         await session.commit()
     logger.info("Schema check: rp_ahrefs_keyword_cache present")
+
+
+async def ensure_rp_suburb_page_history_table() -> None:
+    """Matches infra/sql/019_suburb_page_history.sql."""
+    maker = session_maker()
+    async with maker() as session:
+        await session.execute(
+            text(
+                """
+                CREATE TABLE IF NOT EXISTS rp_suburb_page_history (
+                  id                 uuid PRIMARY KEY,
+                  client_id          uuid NOT NULL REFERENCES rp_clients(client_id) ON DELETE CASCADE,
+                  status             text NOT NULL DEFAULT 'generated',
+                  keyword            text NOT NULL DEFAULT '',
+                  suburb             text NOT NULL DEFAULT '',
+                  slug               text NOT NULL DEFAULT '',
+                  title              text NOT NULL DEFAULT '',
+                  excerpt            text NOT NULL DEFAULT '',
+                  content            text NOT NULL DEFAULT '',
+                  word_count         integer,
+                  image_photo_ids    jsonb NOT NULL DEFAULT '[]',
+                  module_set_used    jsonb NOT NULL DEFAULT '[]',
+                  modules_json       jsonb NOT NULL DEFAULT '[]',
+                  nearby_suburbs     text NOT NULL DEFAULT '',
+                  service_focus      text NOT NULL DEFAULT '',
+                  model              text,
+                  wordpress_page_id  integer,
+                  wordpress_link     text,
+                  generated_at       timestamptz NOT NULL DEFAULT now(),
+                  published_at       timestamptz,
+                  created_at         timestamptz NOT NULL DEFAULT now(),
+                  updated_at         timestamptz NOT NULL DEFAULT now()
+                )
+                """
+            )
+        )
+        await session.execute(
+            text(
+                """
+                CREATE INDEX IF NOT EXISTS idx_suburb_page_history_client_time
+                  ON rp_suburb_page_history (client_id, created_at DESC)
+                """
+            )
+        )
+        await session.execute(
+            text(
+                """
+                ALTER TABLE rp_suburb_page_history
+                  ADD COLUMN IF NOT EXISTS module_set_used jsonb NOT NULL DEFAULT '[]',
+                  ADD COLUMN IF NOT EXISTS modules_json jsonb NOT NULL DEFAULT '[]',
+                  ADD COLUMN IF NOT EXISTS nearby_suburbs text NOT NULL DEFAULT '',
+                  ADD COLUMN IF NOT EXISTS service_focus text NOT NULL DEFAULT ''
+                """
+            )
+        )
+        await session.commit()
+    logger.info("Schema check: rp_suburb_page_history present")

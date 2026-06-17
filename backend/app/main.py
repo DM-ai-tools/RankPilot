@@ -21,6 +21,7 @@ from app.db.schema_bootstrap import (
     ensure_rp_keyword_tracker_tables,
     ensure_rp_suburb_grid_client_index,
     ensure_rp_suburb_geo_table,
+    ensure_rp_suburb_page_history_table,
 )
 from sqlalchemy import text
 from sqlalchemy.engine.url import make_url
@@ -171,6 +172,10 @@ async def lifespan(_app: FastAPI):
             await ensure_rp_keyword_tracker_tables()
         except Exception:
             logger.exception("Schema bootstrap: rp_keyword_tracker / rp_keyword_rank_snapshot")
+        try:
+            await ensure_rp_suburb_page_history_table()
+        except Exception:
+            logger.exception("Schema bootstrap: rp_suburb_page_history (see infra/sql/019_suburb_page_history.sql)")
 
     s = get_settings()
     if str(s.dataforseo_login or "").strip() and str(s.dataforseo_password or "").strip():

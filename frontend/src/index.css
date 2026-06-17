@@ -64,6 +64,27 @@
   .tab-bar-active {
     @apply bg-neutral-50 font-semibold text-neutral-900 shadow-sm;
   }
+
+  /* WordPress live editor — preserve inline styles from published HTML */
+  .wp-live-editor img {
+    max-width: 100%;
+    height: auto;
+  }
+
+  .wp-live-editor figure {
+    margin: 1rem auto;
+    text-align: center;
+  }
+
+  .wp-live-editor p {
+    margin: 0.75rem 0;
+  }
+
+  .wp-live-editor ul,
+  .wp-live-editor ol {
+    margin: 0.75rem 0;
+    padding-left: 1.5rem;
+  }
 }
 
 @layer utilities {

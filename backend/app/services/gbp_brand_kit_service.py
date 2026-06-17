@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import re
 from datetime import UTC, datetime
 from pathlib import Path
@@ -11,8 +12,10 @@ from fastapi import HTTPException, UploadFile
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.lib.brand_image import apply_brand_to_image_path
+from app.lib.brand_image import BackgroundKind, apply_brand_to_image_path
 from app.services.content_generation_service import _get_client_profile
+
+logger = logging.getLogger(__name__)
 
 _BACKEND_ROOT = Path(__file__).resolve().parent.parent.parent
 _BRAND_ROOT = _BACKEND_ROOT / "uploads" / "gbp" / "brandkit"
@@ -341,12 +344,36 @@ async def apply_brand_kit_to_image(
     preferred_background: str | None = None,
 ) -> bool:
     kit = await get_brand_kit_with_paths(session, client_id)
+    dark_path: str | None = None
+    light_path: str | None = None
+    if kit.get("has_logo_on_dark"):
+        try:
+            dark_path = str(await get_brand_logo_path(session, client_id, "on-dark"))
+        except HTTPException:
+            logger.warning("Brand logo on-dark missing for client %s", client_id)
+    if kit.get("has_logo_on_light"):
+        try:
+            light_path = str(await get_brand_logo_path(session, client_id, "on-light"))
+        except HTTPException:
+            logger.warning("Brand logo on-light missing for client %s", client_id)
+
+    if not dark_path and not light_path:
+        return False
+
     bg: BackgroundKind | None = None
     if preferred_background in ("light", "dark"):
         bg = preferred_background  # type: ignore[assignment]
-    return apply_brand_to_image_path(
+    applied = apply_brand_to_image_path(
         image_path,
-        logo_on_dark_path=kit.get("logo_on_dark_path"),
-        logo_on_light_path=kit.get("logo_on_light_path"),
+        logo_on_dark_path=dark_path,
+        logo_on_light_path=light_path,
         preferred_background=bg,
     )
+    if not applied:
+        logger.warning(
+            "Brand logo overlay did not apply for %s (client=%s, bg=%s)",
+            image_path,
+            client_id,
+            preferred_background,
+        )
+    return applied

@@ -17,6 +17,11 @@ _IMAGE_SIZE_TO_RATIO = {
     "2K": "2048:2048",
     "4K": "4096:4096",
 }
+# GBP posts: square. Website/suburb landing pages: 16:9 landscape.
+# gemini_image3_pro only accepts Runway API ratios (not 1920:1080).
+# 1344:768 ≈ 16:9 — see https://docs.dev.runwayml.com/api/#tag/Generate/paths/~1text_to_image/post
+RUNWAY_RATIO_GBP = "1024:1024"
+RUNWAY_RATIO_WEBSITE = "1344:768"
 _FALLBACK_IMAGE_MODELS = ("gemini_2.5_flash", "gemini_image3.1_flash", "gen4_image", "gemini_image3_pro")
 # Minimum credits per successful image (see https://docs.dev.runwayml.com/guides/pricing/)
 _MODEL_MIN_CREDITS: dict[str, int] = {
@@ -71,11 +76,13 @@ class RunwayService:
             "Content-Type": "application/json",
         }
 
-    def _ratio(self) -> str:
+    def _ratio(self, override: str | None = None) -> str:
+        if override and override.strip():
+            return override.strip()
         size = (self._s.runwayml_image_size or "1K").strip().upper()
-        return _IMAGE_SIZE_TO_RATIO.get(size, "1024:1024")
+        return _IMAGE_SIZE_TO_RATIO.get(size, RUNWAY_RATIO_GBP)
 
-    async def text_to_image(self, prompt: str) -> dict[str, Any]:
+    async def text_to_image(self, prompt: str, *, ratio: str | None = None) -> dict[str, Any]:
         """Create task, poll until done, return { task_id, output_urls }."""
         if not self.configured():
             raise ValueError("RUNWAYML_API_KEY is not configured in backend/.env")
@@ -83,6 +90,9 @@ class RunwayService:
         prompt_text = (prompt or "").strip()
         if not prompt_text:
             raise ValueError("Image prompt is required")
+        # Runway API hard limit (all text_to_image models).
+        if len(prompt_text) > 1000:
+            prompt_text = prompt_text[:997].rstrip() + "..."
 
         primary = (self._s.runwayml_model_image or "gemini_2.5_flash").strip()
         models = [primary, *[m for m in _FALLBACK_IMAGE_MODELS if m != primary]]
@@ -98,7 +108,7 @@ class RunwayService:
                 )
             for model in models:
                 try:
-                    task_id = await self._create_task(http, model, prompt_text)
+                    task_id = await self._create_task(http, model, prompt_text, ratio=ratio)
                     output = await self._poll_task(http, task_id)
                     return {"task_id": task_id, "model": model, "output_urls": output}
                 except Exception as exc:  # noqa: BLE001
@@ -106,20 +116,20 @@ class RunwayService:
                     logger.warning("Runway model %s failed: %s", model, exc)
             raise RuntimeError(last_err or "Runway image generation failed")
 
-    def _text_to_image_body(self, model: str, prompt_text: str) -> dict[str, Any]:
+    def _text_to_image_body(self, model: str, prompt_text: str, *, ratio: str | None = None) -> dict[str, Any]:
         """Build request body; Gemini models require referenceImages (may be empty)."""
         body: dict[str, Any] = {
             "model": model,
             "promptText": prompt_text,
-            "ratio": self._ratio(),
+            "ratio": self._ratio(ratio),
         }
         m = (model or "").lower()
         if m.startswith("gemini") or m.startswith("gpt_image") or "nano" in m:
             body["referenceImages"] = []
         return body
 
-    async def _create_task(self, http: httpx.AsyncClient, model: str, prompt_text: str) -> str:
-        body = self._text_to_image_body(model, prompt_text)
+    async def _create_task(self, http: httpx.AsyncClient, model: str, prompt_text: str, *, ratio: str | None = None) -> str:
+        body = self._text_to_image_body(model, prompt_text, ratio=ratio)
         r = await http.post(f"{self._base}/text_to_image", headers=self._headers(), json=body)
         if not r.is_success:
             msg = ""

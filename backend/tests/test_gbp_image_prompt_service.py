@@ -43,7 +43,8 @@ def test_build_prompt_logo_zone_light_archetype():
     )
     assert "top-left" in prompt.lower()
     assert "logo will be placed" not in prompt.lower()
-    assert "never render the business name" in prompt.lower()
+    assert "never render any company name" in prompt.lower()
+    assert "composited automatically" in prompt.lower()
     assert meta["logo_background"] == "light"
 
 

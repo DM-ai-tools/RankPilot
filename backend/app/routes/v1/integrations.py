@@ -673,6 +673,34 @@ class WordPressPageUpdateRequest(BaseModel):
     status: str | None = None
 
 
+class WordPressPageContentUpdateRequest(BaseModel):
+    """Update the WP page body from generated markdown and optionally publish."""
+
+    content_markdown: str
+    status: str | None = "publish"
+
+
+class WordPressPageEditContentResponse(BaseModel):
+    """Live page content for in-place editing (preserves WordPress HTML/formatting)."""
+
+    id: int
+    title: str
+    excerpt: str
+    content_html: str
+    link: str
+    slug: str
+    status: str
+
+
+class WordPressPageHtmlUpdateRequest(BaseModel):
+    """Push edited HTML back to WordPress without markdown conversion."""
+
+    content_html: str
+    title: str | None = None
+    excerpt: str | None = None
+    status: str | None = "publish"
+
+
 class GenerateMetaRequest(BaseModel):
     title: str | None = None
     slug: str | None = None
@@ -701,10 +729,17 @@ class ContentTemplatesResponse(BaseModel):
 
 
 class GenerateContentRequest(BaseModel):
-    template_id: str
+    template_id: str = "service_page"
     prompt: str | None = None
     keywords: list[str] | None = None
     mode: Literal["default", "research"] | None = None
+    suburb: str | None = None
+    nearby_suburbs: str | None = None
+    service_focus: str | None = None
+    structure_mode: Literal["auto", "preset", "manual"] = "auto"
+    preset_id: str | None = None
+    optional_modules: list[str] = []
+    module_set_used: list[str] | None = None
 
 
 class GenerateContentResponse(BaseModel):
@@ -713,6 +748,149 @@ class GenerateContentResponse(BaseModel):
     content: str
     model: str
     mode: Literal["default", "research"]
+    module_set_used: list[str] = []
+    word_count: int = 0
+    modules: list["SuburbPageModule"] = []
+
+
+class SuburbPageImage(BaseModel):
+    role: str
+    photo_id: str | None = None
+    url: str | None = None
+    preview_data_url: str | None = None
+    note: str | None = None
+
+
+class LocalSeoModuleInfo(BaseModel):
+    type: str
+    label: str
+    group: str
+    description: str
+    required: bool
+
+
+class LocalSeoPreset(BaseModel):
+    id: str
+    label: str
+    description: str
+    optional_modules: list[str] | None = None
+
+
+class LocalSeoModuleLibraryResponse(BaseModel):
+    modules: list[LocalSeoModuleInfo]
+    presets: list[LocalSeoPreset]
+    anchors: list[str]
+
+
+class SuburbPageModule(BaseModel):
+    type: str
+    heading: str | None = None
+    body: str = ""
+
+
+class GenerateSuburbPageRequest(BaseModel):
+    keyword: str
+    suburb: str | None = None
+    slug: str | None = None
+    word_count_target: int = 1000
+    image_count: int = 2
+    prompt: str | None = None
+    structure_mode: Literal["auto", "preset", "manual"] = "auto"
+    preset_id: str | None = None
+    optional_modules: list[str] = []
+    nearby_suburbs: str | None = None
+    service_focus: str | None = None
+    keep_image_photo_ids: list[str] = []
+    module_set_used: list[str] | None = None
+    regenerate_images_only: bool = False
+    preserved_title: str | None = None
+    preserved_excerpt: str | None = None
+    preserved_content: str | None = None
+    preserved_modules: list[SuburbPageModule] = []
+
+
+class GenerateSuburbPageResponse(BaseModel):
+    history_id: str
+    title: str
+    excerpt: str
+    content: str
+    word_count: int
+    target_keyword: str
+    slug: str
+    model: str
+    images: list[SuburbPageImage] = []
+    module_set_used: list[str] = []
+    modules: list[SuburbPageModule] = []
+    nearby_suburbs: str = ""
+    service_focus: str = ""
+
+
+class PublishSuburbPageRequest(BaseModel):
+    history_id: str | None = None
+    title: str
+    content: str
+    excerpt: str | None = None
+    slug: str | None = None
+    target_keyword: str | None = None
+    suburb: str | None = None
+    image_photo_ids: list[str] = []
+
+
+class PublishSuburbPageResponse(BaseModel):
+    history_id: str
+    link: str
+    slug: str
+    page_id: int | None = None
+    media_ids: list[int] = []
+
+
+class SuburbPageHistoryItem(BaseModel):
+    id: str
+    status: str
+    keyword: str
+    suburb: str
+    slug: str
+    title: str
+    excerpt: str = ""
+    word_count: int | None = None
+    image_photo_ids: list[str] = []
+    module_set_used: list[str] = []
+    nearby_suburbs: str = ""
+    service_focus: str = ""
+    model: str | None = None
+    wordpress_page_id: int | None = None
+    wordpress_link: str | None = None
+    page_url: str | None = None
+    generated_at: str | None = None
+    published_at: str | None = None
+
+
+class SuburbPageHistoryResponse(BaseModel):
+    items: list[SuburbPageHistoryItem]
+
+
+class SuburbPageHistoryDetail(BaseModel):
+    history_id: str
+    id: str
+    status: str
+    title: str
+    excerpt: str
+    content: str
+    word_count: int
+    target_keyword: str
+    suburb: str
+    slug: str
+    model: str | None = None
+    images: list[SuburbPageImage] = []
+    module_set_used: list[str] = []
+    modules: list[SuburbPageModule] = []
+    nearby_suburbs: str = ""
+    service_focus: str = ""
+    wordpress_page_id: int | None = None
+    wordpress_link: str | None = None
+    page_url: str | None = None
+    generated_at: str | None = None
+    published_at: str | None = None
 
 
 CONTENT_TEMPLATES: list[ContentTemplateItem] = [
@@ -756,6 +934,102 @@ def _strip_html(text_raw: str | None) -> str:
         return ""
     no_tags = re.sub(r"<[^>]+>", " ", text_raw)
     return re.sub(r"\s+", " ", html.unescape(no_tags)).strip()
+
+
+def _wp_content_html(field: object) -> str:
+    """Return stored page body HTML (prefer raw over rendered)."""
+    if isinstance(field, dict):
+        raw = field.get("raw")
+        if raw is not None and str(raw).strip():
+            return str(raw).strip()
+        return str(field.get("rendered") or "").strip()
+    return str(field or "").strip()
+
+
+def _wp_title_text(field: object) -> str:
+    if isinstance(field, dict):
+        raw = field.get("raw")
+        if raw is not None and str(raw).strip():
+            return _strip_html(str(raw))
+        return _strip_html(str(field.get("rendered") or ""))
+    return _strip_html(str(field or ""))
+
+
+def _wp_excerpt_text(field: object) -> str:
+    if isinstance(field, dict):
+        raw = field.get("raw")
+        if raw is not None and str(raw).strip():
+            return _strip_html(str(raw))
+        return _strip_html(str(field.get("rendered") or ""))
+    return _strip_html(str(field or ""))
+
+
+async def _fetch_wp_page_json(
+    *,
+    site: str,
+    wp_user: str,
+    app_secret: str,
+    page_id: int,
+    context: str | None = None,
+    fields: str | None = None,
+) -> dict:
+    qs: dict[str, str] = {}
+    if context:
+        qs["context"] = context
+    if fields:
+        qs["_fields"] = fields
+    query = f"?{urllib.parse.urlencode(qs)}" if qs else ""
+    url = f"{site}/wp-json/wp/v2/pages/{page_id}{query}"
+    async with httpx.AsyncClient(timeout=35, follow_redirects=True) as http:
+        resp = await http.get(
+            url,
+            auth=(wp_user, app_secret),
+            headers={"Accept": "application/json", "User-Agent": "RankPilot/1.0 (WP page fetch)"},
+        )
+    if resp.status_code in (401, 403):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="WordPress rejected credentials/permissions. Reconnect with an editor/admin user.",
+        )
+    if resp.status_code == 404:
+        raise HTTPException(status_code=404, detail=f"WordPress page {page_id} not found.")
+    if not resp.is_success:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"WordPress page fetch failed ({resp.status_code}): {resp.text[:220]}",
+        )
+    data = resp.json()
+    if not isinstance(data, dict):
+        raise HTTPException(status_code=502, detail="WordPress returned an invalid page payload.")
+    return data
+
+
+def _wordpress_page_summary_from_row(r: dict, *, page_id: int | None = None) -> WordPressPageSummary:
+    pid = page_id
+    if pid is None:
+        try:
+            pid = int(r.get("id"))
+        except (TypeError, ValueError):
+            pid = 0
+    raw_title = _wp_title_text(r.get("title"))
+    raw_excerpt = _wp_excerpt_text(r.get("excerpt"))
+    title, excerpt = _extract_wp_seo_title_and_description(
+        r,
+        fallback_title=raw_title,
+        fallback_excerpt=raw_excerpt,
+    )
+    content_txt = _strip_html(_wp_content_html(r.get("content")))
+    wc = len(content_txt.split()) if content_txt else 0
+    return WordPressPageSummary(
+        id=int(pid),
+        title=title or f"Page {pid}",
+        slug=str(r.get("slug") or ""),
+        status=str(r.get("status") or ""),
+        link=str(r.get("link") or ""),
+        modified=str(r.get("modified") or "") or None,
+        excerpt=excerpt or None,
+        word_count=wc,
+    )
 
 
 def _extract_wp_seo_title_and_description(
@@ -1368,6 +1642,227 @@ async def update_wordpress_page(
     )
 
 
+@router.patch(
+    "/integrations/wordpress/pages/{page_id}/save-content",
+    response_model=WordPressPageSummary,
+)
+async def save_wordpress_page_content(
+    page_id: int,
+    body: WordPressPageContentUpdateRequest,
+    client_id: CurrentClientId,
+    session: DbSession,
+) -> WordPressPageSummary:
+    """Save generated markdown into the WP page body and publish."""
+    site, wp_user, app_secret = await _wordpress_credentials(session, client_id)
+
+    from app.services.wordpress_publish_service import (  # noqa: PLC0415
+        _markdown_to_html,
+        embed_rankpilot_figures_in_body,
+        extract_rankpilot_figures,
+    )
+
+    md = (body.content_markdown or "").strip()
+    if not md:
+        raise HTTPException(status_code=400, detail="content_markdown is required.")
+
+    body_html = _markdown_to_html(md)
+    if not body_html.strip():
+        raise HTTPException(status_code=400, detail="Generated content converted to empty HTML.")
+
+    wp_status = (body.status or "publish").strip() or "publish"
+    url = f"{site}/wp-json/wp/v2/pages/{page_id}"
+
+    try:
+        async with httpx.AsyncClient(timeout=35, follow_redirects=True) as http:
+            existing_figures: list[str] = []
+            existing_resp = await http.get(
+                f"{url}?_fields=content",
+                auth=(wp_user, app_secret),
+                headers={"Accept": "application/json"},
+            )
+            if existing_resp.is_success:
+                existing_raw = existing_resp.json()
+                if isinstance(existing_raw, dict):
+                    content_obj = existing_raw.get("content")
+                    rendered = ""
+                    if isinstance(content_obj, dict):
+                        rendered = str(content_obj.get("rendered") or "")
+                    existing_figures = extract_rankpilot_figures(rendered)
+
+            final_html = embed_rankpilot_figures_in_body(body_html, existing_figures)
+            payload: dict[str, object] = {"content": final_html, "status": wp_status}
+            resp = await http.post(
+                url,
+                json=payload,
+                auth=(wp_user, app_secret),
+                headers={"Accept": "application/json", "Content-Type": "application/json"},
+            )
+            if resp.status_code in (401, 403):
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="WordPress rejected update credentials/permissions. Reconnect with an editor/admin user.",
+                )
+            if not resp.is_success:
+                raise HTTPException(
+                    status_code=status.HTTP_502_BAD_GATEWAY,
+                    detail=f"WordPress content update failed ({resp.status_code}): {resp.text[:220]}",
+                )
+
+            # Re-fetch with required fields so response matches WordPress truth.
+            refresh = await http.get(
+                f"{url}?_fields=id,link,slug,status,title,modified,excerpt,content",
+                auth=(wp_user, app_secret),
+                headers={"Accept": "application/json"},
+            )
+            r = refresh.json() if refresh.is_success and isinstance(refresh.json(), dict) else resp.json()  # type: ignore[assignment]
+    except httpx.ReadTimeout:
+        raise HTTPException(
+            status_code=status.HTTP_504_GATEWAY_TIMEOUT,
+            detail="WordPress took too long to save this page. Try again.",
+        ) from None
+    except httpx.HTTPError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"WordPress content update request failed: {exc}",
+        ) from None
+
+    raw_title = _strip_html(str((r.get("title") or {}).get("rendered") if isinstance(r.get("title"), dict) else ""))
+    raw_excerpt = _strip_html(str((r.get("excerpt") or {}).get("rendered") if isinstance(r.get("excerpt"), dict) else ""))
+    title, excerpt = _extract_wp_seo_title_and_description(
+        r,
+        fallback_title=raw_title,
+        fallback_excerpt=raw_excerpt,
+    )
+    content_txt = _strip_html(str((r.get("content") or {}).get("rendered") if isinstance(r.get("content"), dict) else ""))
+    wc = len(content_txt.split()) if content_txt else 0
+
+    return WordPressPageSummary(
+        id=int(r.get("id") or page_id),
+        title=title or f"Page {page_id}",
+        slug=str(r.get("slug") or ""),
+        status=str(r.get("status") or ""),
+        link=str(r.get("link") or ""),
+        modified=str(r.get("modified") or "") or None,
+        excerpt=excerpt or None,
+        word_count=wc,
+    )
+
+
+@router.get(
+    "/integrations/wordpress/pages/{page_id}/edit-content",
+    response_model=WordPressPageEditContentResponse,
+)
+async def get_wordpress_page_edit_content(
+    page_id: int,
+    client_id: CurrentClientId,
+    session: DbSession,
+) -> WordPressPageEditContentResponse:
+    """Load live WordPress page HTML for in-place editing (keeps theme formatting)."""
+    site, wp_user, app_secret = await _wordpress_credentials(session, client_id)
+    try:
+        r = await _fetch_wp_page_json(
+            site=site,
+            wp_user=wp_user,
+            app_secret=app_secret,
+            page_id=page_id,
+            context="edit",
+        )
+    except httpx.ReadTimeout:
+        raise HTTPException(
+            status_code=status.HTTP_504_GATEWAY_TIMEOUT,
+            detail="WordPress took too long to load this page. Try again.",
+        ) from None
+    except httpx.HTTPError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"WordPress page load failed: {exc}",
+        ) from None
+
+    raw_title = _wp_title_text(r.get("title"))
+    raw_excerpt = _wp_excerpt_text(r.get("excerpt"))
+    title, excerpt = _extract_wp_seo_title_and_description(
+        r,
+        fallback_title=raw_title,
+        fallback_excerpt=raw_excerpt,
+    )
+    content_html = _wp_content_html(r.get("content"))
+    if not content_html.strip():
+        raise HTTPException(status_code=400, detail="This WordPress page has no body content to edit.")
+
+    return WordPressPageEditContentResponse(
+        id=int(r.get("id") or page_id),
+        title=title or raw_title,
+        excerpt=excerpt or raw_excerpt,
+        content_html=content_html,
+        link=str(r.get("link") or ""),
+        slug=str(r.get("slug") or ""),
+        status=str(r.get("status") or ""),
+    )
+
+
+@router.patch(
+    "/integrations/wordpress/pages/{page_id}/save-html-content",
+    response_model=WordPressPageSummary,
+)
+async def save_wordpress_page_html_content(
+    page_id: int,
+    body: WordPressPageHtmlUpdateRequest,
+    client_id: CurrentClientId,
+    session: DbSession,
+) -> WordPressPageSummary:
+    """Save edited HTML directly to WordPress — preserves layout, fonts, and images."""
+    site, wp_user, app_secret = await _wordpress_credentials(session, client_id)
+
+    html_content = (body.content_html or "").strip()
+    if not html_content:
+        raise HTTPException(status_code=400, detail="content_html is required.")
+
+    wp_status = (body.status or "publish").strip() or "publish"
+    url = f"{site}/wp-json/wp/v2/pages/{page_id}"
+    payload: dict[str, object] = {"content": html_content, "status": wp_status}
+    if body.title is not None:
+        payload["title"] = body.title.strip()
+    if body.excerpt is not None:
+        payload["excerpt"] = body.excerpt.strip()
+
+    try:
+        async with httpx.AsyncClient(timeout=35, follow_redirects=True) as http:
+            resp = await http.post(
+                url,
+                json=payload,
+                auth=(wp_user, app_secret),
+                headers={"Accept": "application/json", "Content-Type": "application/json"},
+            )
+            if resp.status_code in (401, 403):
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="WordPress rejected update credentials/permissions. Reconnect with an editor/admin user.",
+                )
+            if not resp.is_success:
+                raise HTTPException(
+                    status_code=status.HTTP_502_BAD_GATEWAY,
+                    detail=f"WordPress content update failed ({resp.status_code}): {resp.text[:220]}",
+                )
+            refresh = await http.get(
+                f"{url}?_fields=id,link,slug,status,title,modified,excerpt,content",
+                auth=(wp_user, app_secret),
+                headers={"Accept": "application/json"},
+            )
+            r = refresh.json() if refresh.is_success and isinstance(refresh.json(), dict) else resp.json()  # type: ignore[assignment]
+    except httpx.ReadTimeout:
+        raise HTTPException(
+            status_code=status.HTTP_504_GATEWAY_TIMEOUT,
+            detail="WordPress took too long to save this page. Try again.",
+        ) from None
+    except httpx.HTTPError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"WordPress content update request failed: {exc}",
+        ) from None
+
+    return _wordpress_page_summary_from_row(r, page_id=page_id)
+
+
 @router.post("/integrations/wordpress/pages/{page_id}/generate-meta", response_model=GenerateMetaResponse)
 async def generate_wordpress_page_meta(
     page_id: int,
@@ -1573,6 +2068,7 @@ async def generate_wordpress_page_content(
     client_id: CurrentClientId,
     session: DbSession,
 ) -> GenerateContentResponse:
+    """Generate page body using the same Clicktrends module skeleton (A–N) as suburb builder."""
     settings = _cfg()
     api_key = get_openrouter_api_key()
     if not api_key:
@@ -1581,15 +2077,20 @@ async def generate_wordpress_page_content(
             detail="OPENROUTER_API_KEY is missing in backend/.env (or server needs reload).",
         )
 
-    template = next((t for t in CONTENT_TEMPLATES if t.id == body.template_id), None)
-    if template is None:
-        raise HTTPException(status_code=400, detail="Unknown content template.")
+    from app.services.local_seo_page_service import (  # noqa: PLC0415
+        build_generation_prompt,
+        build_module_set,
+        build_result_from_module_json,
+        call_openrouter_for_modules,
+        suggest_nearby_suburbs,
+    )
+    from app.services.suburb_page_history_service import list_recent_module_sets  # noqa: PLC0415
 
     row = (
         await session.execute(
             text(
                 """
-                SELECT business_name, primary_keyword, metro_label
+                SELECT business_name, business_url, primary_keyword, metro_label
                 FROM rp_clients
                 WHERE client_id = :cid
                 LIMIT 1
@@ -1599,23 +2100,20 @@ async def generate_wordpress_page_content(
         )
     ).mappings().first()
     business = str((row or {}).get("business_name") or "").strip()
+    business_url = str((row or {}).get("business_url") or "").strip()
     primary_kw = str((row or {}).get("primary_keyword") or "").strip()
     metro = str((row or {}).get("metro_label") or "").strip()
     generation_mode = body.mode or "default"
+    service_focus = re.sub(r"\s+", " ", (body.service_focus or "").strip())
 
     site, wp_user, app_secret = await _wordpress_credentials(session, client_id)
-    page_content_sample, page_style_hint, existing_meta_rows = await _fetch_wp_generation_context(
+    _, page_style_hint, existing_meta_rows = await _fetch_wp_generation_context(
         site=site,
         wp_user=wp_user,
         app_secret=app_secret,
         page_id=page_id,
     )
-    existing_meta_hint = "\n".join(
-        [
-            f"- title: {r.get('title','')[:90]} | desc: {r.get('description','')[:130]}"
-            for r in existing_meta_rows[:12]
-        ]
-    )
+
     raw_keywords = body.keywords or []
     keywords: list[str] = []
     seen_kw: set[str] = set()
@@ -1630,110 +2128,56 @@ async def generate_wordpress_page_content(
         keywords.append(token)
         if len(keywords) >= 10:
             break
-    keyword_line = ", ".join(keywords) if keywords else "N/A"
 
-    mode_note = (
-        "- Research mode: include current SERP/web wording patterns before drafting\n"
-        if generation_mode == "research"
-        else "- Default mode: use provided page/business context only\n"
+    keyword = keywords[0] if keywords else primary_kw
+    if not keyword:
+        raise HTTPException(status_code=400, detail="Add at least one focus keyword for content generation.")
+
+    suburb = re.sub(r"\s+", " ", (body.suburb or "").strip())
+    nearby_suburbs = re.sub(r"\s+", " ", (body.nearby_suburbs or "").strip())
+    if not nearby_suburbs:
+        nearby_suburbs = suggest_nearby_suburbs(suburb=suburb, metro_label=metro)
+
+    recent_sets = await list_recent_module_sets(session, client_id)
+    locked = [str(x).upper() for x in (body.module_set_used or []) if x]
+    if locked:
+        module_set = locked
+    else:
+        module_set = build_module_set(
+            structure_mode=body.structure_mode,
+            optional_modules=body.optional_modules or None,
+            preset_id=body.preset_id,
+            recent_sets=recent_sets,
+        )
+
+    prompt = build_generation_prompt(
+        primary_keyword=keyword,
+        suburb=suburb,
+        nearby_suburbs=nearby_suburbs,
+        service_focus=service_focus,
+        module_set=module_set,
+        business=business,
+        business_url=business_url,
+        recent_module_sets=recent_sets,
+    )
+    extra = (body.prompt or "").strip()
+    if extra:
+        prompt += f"\n\nAdditional instructions:\n{extra}\n"
+    if generation_mode == "research":
+        prompt += "\nResearch mode: include current SERP/local wording patterns before drafting.\n"
+    if page_style_hint:
+        prompt += f"\nPage style hint: {page_style_hint}\n"
+
+    content_raw, used_model = await call_openrouter_for_modules(
+        prompt=prompt,
+        api_key=api_key,
+        referer=str(settings.google_redirect_base_url or "http://localhost:5173"),
+        title_header="RankPilot SEO Website Content",
     )
 
-    prompt = (
-        "Generate website page content as valid Markdown.\n"
-        "Return strict JSON only:\n"
-        "{\"title\":\"...\",\"description\":\"...\",\"content\":\"...\"}\n"
-        "Rules:\n"
-        "- Title max 60 chars\n"
-        "- Description max 150 chars\n"
-        "- Content should follow template sections in order\n"
-        "- Avoid repeating titles/meta already used on other pages\n"
-        "- Keep language aligned with page style hint\n"
-        f"{mode_note}\n"
-        f"Template: {template.label}\n"
-        f"Template sections: {', '.join(template.sections)}\n"
-        f"Business: {business or 'N/A'}\n"
-        f"Primary keyword: {primary_kw or 'N/A'}\n"
-        f"Metro: {metro or 'N/A'}\n"
-        f"Keyword list (max 10): {keyword_line}\n"
-        f"User prompt: {(body.prompt or '').strip() or 'N/A'}\n"
-        f"Page content sample: {page_content_sample or 'N/A'}\n"
-        f"Page style hint: {page_style_hint or 'N/A'}\n"
-        f"Existing site SEO metadata (avoid exact duplicates):\n{existing_meta_hint or 'N/A'}\n"
-    )
-
-    primary_model = get_openrouter_model()
-    # Always prioritize Sonar family for content generation.
-    models = ["perplexity/sonar-pro", "perplexity/sonar"]
-    if primary_model not in models:
-        models.append(primary_model)
-
-    last_error = "Unknown OpenRouter error"
-    content_raw = ""
-    used_model = primary_model
-    for i, mdl in enumerate(models):
-        used_model = mdl
-        try:
-            async with httpx.AsyncClient(timeout=45) as http:
-                resp = await http.post(
-                    "https://openrouter.ai/api/v1/chat/completions",
-                    headers={
-                        "Authorization": f"Bearer {api_key}",
-                        "Content-Type": "application/json",
-                        "Accept": "application/json",
-                        "HTTP-Referer": str(settings.google_redirect_base_url or "http://localhost:5173"),
-                        "X-Title": "RankPilot SEO Website Content",
-                    },
-                    json={
-                        "model": mdl,
-                        "messages": [
-                            {"role": "system", "content": "You are an expert SEO website copywriter."},
-                            {"role": "user", "content": prompt},
-                        ],
-                        "temperature": 0.45,
-                        "max_tokens": 900 if i == 0 else 700,
-                    },
-                )
-        except httpx.HTTPError as exc:
-            last_error = f"OpenRouter request failed on model {mdl}: {exc}"
-            continue
-
-        if not resp.is_success:
-            if resp.status_code == 401:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="OpenRouter unauthorized (401). Check OPENROUTER_API_KEY in backend/.env.",
-                )
-            last_error = f"OpenRouter error ({resp.status_code}) on {mdl}: {resp.text[:220]}"
-            continue
-
-        data = resp.json() if isinstance(resp.json(), dict) else {}
-        upstream_error = _openrouter_error_message(data if isinstance(data, dict) else {})
-        if upstream_error:
-            last_error = f"Upstream provider error on {mdl}: {upstream_error}"
-            continue
-        content_raw = _openrouter_extract_text(data if isinstance(data, dict) else {})
-        if content_raw:
-            break
-        last_error = f"OpenRouter empty output on {mdl}"
-
-    if not content_raw:
-        raise HTTPException(status_code=502, detail=f"Content generation failed: {last_error}")
-
-    title, desc = _extract_title_and_description(content_raw)
-    md_content = ""
-    with contextlib.suppress(Exception):
-        parsed = json.loads(content_raw)
-        if isinstance(parsed, dict):
-            md_content = str(parsed.get("content") or "").strip()
-    if not md_content:
-        md_content = content_raw.strip()
-
-    title = (title or template.label).strip()
-    desc = (desc or page_style_hint or "").strip()
-    if len(title) > 60:
-        title = title[:60].rstrip()
-    if len(desc) > 150:
-        desc = desc[:150].rstrip()
+    result = build_result_from_module_json(content_raw, keyword=keyword, module_set=module_set)
+    title = result["title"]
+    desc = result["excerpt"]
     title, desc = _avoid_cannibalization(
         generated_title=title,
         generated_desc=desc,
@@ -1742,12 +2186,405 @@ async def generate_wordpress_page_content(
         primary_kw=primary_kw,
     )
 
+    module_models = [
+        SuburbPageModule(
+            type=str(m.get("type") or ""),
+            heading=str(m.get("heading") or "") or None,
+            body=str(m.get("body") or ""),
+        )
+        for m in result["modules"]
+    ]
+
     return GenerateContentResponse(
         title=title,
         excerpt=desc,
-        content=md_content,
+        content=result["content"],
         model=used_model,
         mode=generation_mode,
+        module_set_used=result["module_set_used"],
+        word_count=result["word_count"],
+        modules=module_models,
+    )
+
+
+def _slugify_phrase(raw: str) -> str:
+    s = (raw or "").lower()
+    s = re.sub(r"[^\w\s-]", "", s)
+    s = re.sub(r"[-\s]+", "-", s).strip("-")
+    return s[:80] or "landing-page"
+
+
+@router.get(
+    "/integrations/wordpress/suburb-pages/modules",
+    response_model=LocalSeoModuleLibraryResponse,
+)
+async def get_suburb_page_modules() -> LocalSeoModuleLibraryResponse:
+    """Module library A–N and layout presets for local SEO suburb pages."""
+    from app.services.local_seo_page_service import module_library_payload  # noqa: PLC0415
+
+    payload = module_library_payload()
+    return LocalSeoModuleLibraryResponse(**payload)
+
+
+@router.post(
+    "/integrations/wordpress/suburb-pages/generate",
+    response_model=GenerateSuburbPageResponse,
+)
+async def generate_suburb_page(
+    body: GenerateSuburbPageRequest,
+    client_id: CurrentClientId,
+    session: DbSession,
+) -> GenerateSuburbPageResponse:
+    """Generate a geo/suburb landing page using the Clicktrends module library (A–N)."""
+    settings = _cfg()
+    api_key = get_openrouter_api_key()
+    if not api_key:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="OPENROUTER_API_KEY is missing in backend/.env (or server needs reload).",
+        )
+
+    from app.services.local_seo_page_service import (  # noqa: PLC0415
+        build_generation_prompt,
+        build_module_set,
+        build_result_from_module_json,
+        call_openrouter_for_modules,
+        suggest_nearby_suburbs,
+    )
+    from app.services.suburb_page_history_service import (  # noqa: PLC0415
+        list_recent_module_sets,
+        save_generated,
+    )
+
+    keyword = re.sub(r"\s+", " ", (body.keyword or "").strip())
+    if not keyword:
+        raise HTTPException(status_code=400, detail="A focus keyword is required.")
+
+    suburb = re.sub(r"\s+", " ", (body.suburb or "").strip())
+    image_count = max(0, min(2, int(body.image_count or 0)))
+    service_focus = re.sub(r"\s+", " ", (body.service_focus or "").strip())
+
+    row = (
+        await session.execute(
+            text(
+                """
+                SELECT business_name, business_url, primary_keyword, metro_label
+                FROM rp_clients
+                WHERE client_id = :cid
+                LIMIT 1
+                """
+            ),
+            {"cid": str(client_id)},
+        )
+    ).mappings().first()
+    business = str((row or {}).get("business_name") or "").strip()
+    business_url = str((row or {}).get("business_url") or "").strip()
+    primary_kw = str((row or {}).get("primary_keyword") or "").strip()
+    metro = str((row or {}).get("metro_label") or "").strip()
+    location_line = f"{suburb}, {metro}".strip(", ") if suburb else metro
+
+    nearby_suburbs = re.sub(r"\s+", " ", (body.nearby_suburbs or "").strip())
+    if not nearby_suburbs:
+        nearby_suburbs = suggest_nearby_suburbs(suburb=suburb, metro_label=metro)
+
+    recent_sets = await list_recent_module_sets(session, client_id)
+    locked = [str(x).upper() for x in (body.module_set_used or []) if x]
+    if locked:
+        module_set = locked
+    else:
+        module_set = build_module_set(
+            structure_mode=body.structure_mode,
+            optional_modules=body.optional_modules or None,
+            preset_id=body.preset_id,
+            recent_sets=recent_sets,
+        )
+
+    if body.regenerate_images_only:
+        md_content = (body.preserved_content or "").strip()
+        if not md_content:
+            raise HTTPException(
+                status_code=400,
+                detail="preserved_content is required when regenerate_images_only is true.",
+            )
+        title = re.sub(r"\s+", " ", (body.preserved_title or "").strip()) or keyword.title()
+        desc = re.sub(r"\s+", " ", (body.preserved_excerpt or "").strip())
+        modules = [
+            {
+                "type": str(m.type or ""),
+                "heading": m.heading,
+                "body": str(m.body or ""),
+            }
+            for m in (body.preserved_modules or [])
+        ]
+        module_set_used = module_set
+        word_count = len([w for w in md_content.split() if w])
+        used_model = "preserved"
+        slug = _slugify_phrase(body.slug or keyword)
+    else:
+        prompt = build_generation_prompt(
+            primary_keyword=keyword,
+            suburb=suburb,
+            nearby_suburbs=nearby_suburbs,
+            service_focus=service_focus,
+            module_set=module_set,
+            business=business,
+            business_url=business_url,
+            recent_module_sets=recent_sets,
+        )
+        extra = (body.prompt or "").strip()
+        if extra:
+            prompt += f"\n\nAdditional instructions:\n{extra}\n"
+
+        content_raw, used_model = await call_openrouter_for_modules(
+            prompt=prompt,
+            api_key=api_key,
+            referer=str(settings.google_redirect_base_url or "http://localhost:5173"),
+            title_header="RankPilot Suburb Landing Page",
+        )
+
+        result = build_result_from_module_json(content_raw, keyword=keyword, module_set=module_set)
+        modules = result["modules"]
+        module_set_used = result["module_set_used"]
+        title = result["title"]
+        desc = result["excerpt"]
+        md_content = result["content"]
+        word_count = result["word_count"]
+        slug = _slugify_phrase(body.slug or keyword)
+
+    images: list[SuburbPageImage] = []
+    keep_ids: list[str] = []
+    if not body.regenerate_images_only:
+        keep_ids = [str(x).strip() for x in (body.keep_image_photo_ids or []) if str(x).strip()]
+    if keep_ids:
+        roles = ["hero", "service"]
+        for idx, pid in enumerate(keep_ids[:2]):
+            role = roles[idx] if idx < len(roles) else f"image-{idx + 1}"
+            images.append(SuburbPageImage(role=role, photo_id=pid))
+    elif image_count > 0:
+        runway_ready = bool((settings.runwayml_api_key or "").strip())
+        if not runway_ready:
+            images.append(
+                SuburbPageImage(role="hero", note="No image — set RUNWAYML_API_KEY for AI images.")
+            )
+        else:
+            from app.services.gbp_photos_service import (  # noqa: PLC0415
+                generate_suburb_landing_image,
+            )
+            from app.services.suburb_page_history_service import (  # noqa: PLC0415
+                get_recent_suburb_image_photo_ids,
+            )
+            from app.services.gbp_brand_kit_service import get_brand_kit  # noqa: PLC0415
+
+            brand = await get_brand_kit(session, client_id)
+            roles = ["hero", "service"]
+            prior: list[str] = []
+            recent_photo_ids = await get_recent_suburb_image_photo_ids(session, client_id)
+            for idx in range(image_count):
+                role = roles[idx] if idx < len(roles) else f"image-{idx + 1}"
+                try:
+                    img = await generate_suburb_landing_image(
+                        session,
+                        client_id,
+                        business_name=business,
+                        keyword=keyword,
+                        suburb=suburb,
+                        metro=location_line or metro,
+                        role=role,
+                        brand_config=brand,
+                        post_index=idx + 1,
+                        post_total=image_count,
+                        prior_archetypes=prior,
+                        recent_photo_ids=recent_photo_ids,
+                    )
+                except Exception as exc:
+                    img = None
+                    img_err = str(exc)[:160]
+                else:
+                    img_err = ""
+                if img and img.get("photo_id"):
+                    images.append(
+                        SuburbPageImage(
+                            role=role,
+                            photo_id=str(img.get("photo_id")),
+                            url=str(img.get("url") or "") or None,
+                            preview_data_url=str(img.get("preview_data_url") or "") or None,
+                        )
+                    )
+                    if img.get("archetype"):
+                        prior.append(str(img["archetype"]))
+                else:
+                    note = img_err or "Image generation skipped (check RUNWAYML_API_KEY and Runway credits)."
+                    images.append(SuburbPageImage(role=role, note=note))
+
+    photo_ids = [img.photo_id for img in images if img.photo_id]
+
+    history_id = await save_generated(
+        session,
+        client_id,
+        keyword=keyword,
+        suburb=suburb,
+        slug=slug,
+        title=title,
+        excerpt=desc,
+        content=md_content,
+        word_count=word_count,
+        image_photo_ids=photo_ids,
+        model=used_model,
+        module_set_used=module_set_used,
+        modules_json=modules,
+        nearby_suburbs=nearby_suburbs,
+        service_focus=service_focus,
+    )
+
+    module_models = [
+        SuburbPageModule(
+            type=str(m.get("type") or ""),
+            heading=str(m.get("heading") or "") or None,
+            body=str(m.get("body") or ""),
+        )
+        for m in modules
+    ]
+
+    return GenerateSuburbPageResponse(
+        history_id=history_id,
+        title=title,
+        excerpt=desc,
+        content=md_content,
+        word_count=word_count,
+        target_keyword=keyword,
+        slug=slug,
+        model=used_model,
+        images=images,
+        module_set_used=module_set_used,
+        modules=module_models,
+        nearby_suburbs=nearby_suburbs,
+        service_focus=service_focus,
+    )
+
+
+@router.post(
+    "/integrations/wordpress/suburb-pages/publish",
+    response_model=PublishSuburbPageResponse,
+)
+async def publish_suburb_page(
+    body: PublishSuburbPageRequest,
+    client_id: CurrentClientId,
+    session: DbSession,
+) -> PublishSuburbPageResponse:
+    """Publish a generated suburb landing page (text + images) to WordPress."""
+    from app.services.wordpress_publish_service import publish_page_with_images  # noqa: PLC0415
+
+    title = (body.title or "").strip()
+    content = (body.content or "").strip()
+    if not title or not content:
+        raise HTTPException(status_code=400, detail="Title and content are required.")
+
+    slug_hint = (body.slug or "").strip() or _slugify_phrase((body.target_keyword or "").strip() or title)
+    target_url_hint = f"https://example.com/{slug_hint}/"
+
+    result = await publish_page_with_images(
+        session,
+        client_id,
+        title=title,
+        content_markdown=content,
+        excerpt=(body.excerpt or "").strip() or None,
+        target_url_hint=target_url_hint,
+        image_photo_ids=body.image_photo_ids or [],
+    )
+
+    from app.services.suburb_page_history_service import mark_published  # noqa: PLC0415
+
+    history_id = await mark_published(
+        session,
+        client_id,
+        (body.history_id or "").strip() or None,
+        keyword=(body.target_keyword or "").strip() or slug_hint,
+        suburb=(body.suburb or "").strip(),
+        slug=str(result.get("slug") or slug_hint),
+        title=title,
+        excerpt=(body.excerpt or "").strip(),
+        content=content,
+        word_count=len([w for w in content.split() if w]),
+        image_photo_ids=body.image_photo_ids or [],
+        model=None,
+        wordpress_page_id=result.get("page_id"),
+        wordpress_link=str(result.get("link") or ""),
+    )
+
+    return PublishSuburbPageResponse(
+        history_id=history_id,
+        link=str(result.get("link") or ""),
+        slug=str(result.get("slug") or ""),
+        page_id=int(result["page_id"]) if result.get("page_id") is not None else None,
+        media_ids=[int(m) for m in (result.get("media_ids") or []) if m],
+    )
+
+
+@router.get(
+    "/integrations/wordpress/suburb-pages/history",
+    response_model=SuburbPageHistoryResponse,
+)
+async def list_suburb_page_history(
+    client_id: CurrentClientId,
+    session: DbSession,
+    limit: int = Query(default=50, ge=1, le=100),
+) -> SuburbPageHistoryResponse:
+    """List generated and published suburb landing pages (newest first)."""
+    from app.services.suburb_page_history_service import list_history  # noqa: PLC0415
+
+    rows = await list_history(session, client_id, limit=limit)
+    wp_site = ""
+    with contextlib.suppress(HTTPException):
+        wp_site, _, _ = await _wordpress_credentials(session, client_id)
+
+    items: list[SuburbPageHistoryItem] = []
+    for r in rows:
+        live = str(r.get("wordpress_link") or "").strip()
+        slug = str(r.get("slug") or "").strip().strip("/")
+        page_url = live
+        if not page_url and wp_site and slug:
+            page_url = f"{wp_site.rstrip('/')}/{slug}/"
+        items.append(SuburbPageHistoryItem(**r, page_url=page_url or None))
+    return SuburbPageHistoryResponse(items=items)
+
+
+@router.get(
+    "/integrations/wordpress/suburb-pages/history/{history_id}",
+    response_model=SuburbPageHistoryDetail,
+)
+async def get_suburb_page_history_item(
+    history_id: str,
+    client_id: CurrentClientId,
+    session: DbSession,
+) -> SuburbPageHistoryDetail:
+    """Load full saved suburb page (content + images) for the builder."""
+    from app.services.suburb_page_history_service import get_history_item  # noqa: PLC0415
+
+    detail = await get_history_item(session, client_id, history_id)
+    wp_site = ""
+    with contextlib.suppress(HTTPException):
+        wp_site, _, _ = await _wordpress_credentials(session, client_id)
+    live = str(detail.get("wordpress_link") or "").strip()
+    slug = str(detail.get("slug") or "").strip().strip("/")
+    page_url = live or (f"{wp_site.rstrip('/')}/{slug}/" if wp_site and slug else None)
+    return SuburbPageHistoryDetail(**detail, page_url=page_url or None)
+
+
+@router.delete("/integrations/wordpress/suburb-pages/history/{history_id}")
+async def delete_suburb_page_history(
+    history_id: str,
+    client_id: CurrentClientId,
+    session: DbSession,
+    delete_wordpress: bool = Query(default=True),
+) -> dict:
+    """Remove a history row and optionally delete the WordPress page."""
+    from app.services.suburb_page_history_service import delete_history_item  # noqa: PLC0415
+
+    return await delete_history_item(
+        session,
+        client_id,
+        history_id,
+        delete_wordpress=delete_wordpress,
     )
 
 

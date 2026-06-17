@@ -332,6 +332,7 @@ function PostsTab({
   const [postCount, setPostCount] = useState(1);
   const [promptGenCount, setPromptGenCount] = useState(1);
   const [selectedPromptKws, setSelectedPromptKws] = useState<string[]>([]);
+  const [manualPromptKwInput, setManualPromptKwInput] = useState("");
   const [keywordPreview, setKeywordPreview] = useState<string | null>(null);
   const [activePromptIdx, setActivePromptIdx] = useState(0);
   const [scheduleDate, setScheduleDate] = useState("");
@@ -426,6 +427,29 @@ function PostsTab({
     setSelectedPromptKws((prev) =>
       prev.includes(kw) ? prev.filter((k) => k !== kw) : [...prev, kw],
     );
+
+  const removePromptKw = (kw: string) =>
+    setSelectedPromptKws((prev) => prev.filter((k) => k !== kw));
+
+  const addManualPromptKws = () => {
+    const parsed = manualPromptKwInput
+      .split(/[\n,]+/)
+      .map((k) => k.trim())
+      .filter(Boolean);
+    if (!parsed.length) return;
+    setSelectedPromptKws((prev) => {
+      const seen = new Set(prev.map((k) => k.toLowerCase()));
+      const next = [...prev];
+      for (const kw of parsed) {
+        const key = kw.toLowerCase();
+        if (seen.has(key)) continue;
+        seen.add(key);
+        next.push(kw);
+      }
+      return next;
+    });
+    setManualPromptKwInput("");
+  };
 
   const generateDirections = useMutation({
     mutationFn: () =>
@@ -558,16 +582,39 @@ function PostsTab({
           <div className="grid gap-4 lg:grid-cols-[1fr_220px]">
             <div className="rounded-lg border border-dashed border-[#C2E0FF] bg-[#F8FAFC] p-4">
               <p className="text-[11px] text-navy">
-                Select Ahrefs keywords on the right, choose how many prompts you need, then generate.
-                Each prompt is a detailed persuasive image brief (150+ words) for Runway — not a one-liner.
+                Select Ahrefs keywords on the right, type your own keywords manually, choose how many prompts you
+                need, then generate. Each prompt is a detailed persuasive image brief (150+ words) for Runway — not
+                a one-liner.
               </p>
               {selectedPromptKws.length > 0 ? (
-                <p className="mt-2 text-[11px] font-semibold text-[#137333]">
-                  {selectedPromptKws.length} keyword{selectedPromptKws.length > 1 ? "s" : ""} selected
-                  {selectedPromptKws.length < promptGenCount
-                    ? ` — will rotate across ${promptGenCount} prompts`
-                    : ""}
-                </p>
+                <div className="mt-2 space-y-2">
+                  <p className="text-[11px] font-semibold text-[#137333]">
+                    {selectedPromptKws.length} keyword{selectedPromptKws.length > 1 ? "s" : ""} selected
+                    {selectedPromptKws.length < promptGenCount
+                      ? ` — will rotate across ${promptGenCount} prompts`
+                      : ""}
+                  </p>
+                  <div className="flex flex-wrap gap-1.5">
+                    {selectedPromptKws.map((kw) => (
+                      <span
+                        key={kw}
+                        className="inline-flex max-w-full items-center gap-1 rounded-full bg-white px-2 py-0.5 text-[10px] text-navy ring-1 ring-[#34A853]"
+                      >
+                        <span className="truncate" title={kw}>
+                          {kw}
+                        </span>
+                        <button
+                          type="button"
+                          className="shrink-0 text-rp-tlight hover:text-red-600"
+                          aria-label={`Remove ${kw}`}
+                          onClick={() => removePromptKw(kw)}
+                        >
+                          ×
+                        </button>
+                      </span>
+                    ))}
+                  </div>
+                </div>
               ) : (
                 <p className="mt-2 text-[11px] text-rp-tlight">No keywords selected yet.</p>
               )}
@@ -633,6 +680,37 @@ function PostsTab({
                   })}
                 </div>
               )}
+
+              <div className="mt-3 border-t border-rp-border pt-3">
+                <p className="mb-1.5 text-[10px] font-bold uppercase tracking-[0.08em] text-[#8EA3BC]">
+                  Or type keywords manually
+                </p>
+                <p className="mb-2 text-[10px] text-rp-tlight">
+                  One per line or comma-separated — added to your selection above
+                </p>
+                <textarea
+                  className="min-h-[72px] w-full rounded-lg border border-rp-border bg-white px-2 py-1.5 text-[11px] text-navy"
+                  placeholder={"ai seo agency richmond\nlocal seo melbourne\nseo consultant"}
+                  value={manualPromptKwInput}
+                  onChange={(e) => setManualPromptKwInput(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
+                      e.preventDefault();
+                      addManualPromptKws();
+                    }
+                  }}
+                />
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  className="mt-2 w-full"
+                  disabled={!manualPromptKwInput.trim()}
+                  onClick={addManualPromptKws}
+                >
+                  Add to selection
+                </Button>
+              </div>
             </div>
           </div>
 

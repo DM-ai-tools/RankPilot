@@ -125,7 +125,7 @@ def _draw_backdrop(
     pad = max(6, int(min(logo_w, logo_h) * 0.12))
     if cover_ai_branding:
         # Wider pill hides AI-hallucinated logos/text in the same corner before we paste the real logo.
-        pad = max(pad, int(max(logo_w, logo_h) * 0.45))
+        pad = max(pad, int(max(logo_w, logo_h) * 0.65))
     fill = (15, 23, 42, 190) if kind == "dark" else (255, 255, 255, 215)
     box = (x - pad, y - pad, x + logo_w + pad, y + logo_h + pad)
     draw = ImageDraw.Draw(layer)
