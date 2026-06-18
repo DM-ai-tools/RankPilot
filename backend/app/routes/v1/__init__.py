@@ -8,6 +8,7 @@ from app.routes.v1 import (
     citations,
     content_queue,
     dashboard,
+    ga4,
     gbp,
     google_ads,
     health,
@@ -42,3 +43,4 @@ api_router.include_router(jobs.router, prefix="/jobs", tags=["jobs"])
 api_router.include_router(integrations.router, tags=["integrations"])
 api_router.include_router(keywords.router, prefix="/keywords", tags=["keywords"])
 api_router.include_router(google_ads.router, tags=["google-ads"])
+api_router.include_router(ga4.router, prefix="/ga4", tags=["ga4"])

@@ -6,6 +6,7 @@ import { RequireOnboarded } from "./components/RequireOnboarded";
 import { ChatPage } from "./pages/ChatPage";
 import { CitationsPage } from "./pages/CitationsPage";
 import { DashboardPage } from "./pages/DashboardPage";
+import { Ga4Page } from "./pages/Ga4Page";
 import { GbpPage } from "./pages/GbpPage";
 import { NewScanPage } from "./pages/NewScanPage";
 import { OnboardingPage } from "./pages/OnboardingPage";
@@ -49,6 +50,7 @@ export default function App() {
             <Route path="reviews" element={<ReviewsPage />} />
             <Route path="chat" element={<ChatPage />} />
             <Route path="reports" element={<ReportsPage />} />
+            <Route path="ga4" element={<Ga4Page />} />
             <Route path="settings" element={<SettingsPage />} />
           </Route>
         </Route>

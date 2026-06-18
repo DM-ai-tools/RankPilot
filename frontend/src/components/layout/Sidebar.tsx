@@ -1,5 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import {
+  Activity,
   Building2,
   ClipboardList,
   FilePenLine,
@@ -34,6 +35,7 @@ const NAV_ITEMS: {
   { to: "/citations", label: "Citations", icon: ClipboardList, badgeKey: "citations" },
   { to: "/reviews", label: "Reviews", icon: Star },
   { to: "/ranks", label: "Keywords", icon: KeyRound },
+  { to: "/ga4", label: "GA4 Analytics", icon: Activity },
   { to: "/reports", label: "Monthly Report", icon: FileText },
   { to: "/onboarding", label: "Business Setup", icon: Building2 },
 ];
