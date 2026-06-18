@@ -15,7 +15,16 @@ from app.services.ga4_service import (
     fetch_geo,
     fetch_organic_landing_pages,
     fetch_overview,
+    fetch_page_options,
     fetch_pages,
+    parse_page_filter,
+)
+from app.services.gbp_performance_service import fetch_gbp_performance
+from app.services.gsc_service import (
+    fetch_gsc_content_insights,
+    fetch_gsc_keywords,
+    fetch_gsc_performance,
+    fetch_gsc_top_pages,
 )
 
 logger = logging.getLogger(__name__)
@@ -23,6 +32,43 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 _RANGE_VALUES = list(RANGE_DAYS.keys())  # week, month, quarter, half, year
+
+
+def _period_kwargs(
+    range: str,
+    compare: bool,
+    start_date: str | None,
+    end_date: str | None,
+    pages: str | None = None,
+) -> dict:
+    result: dict = {
+        "range_key": range,
+        "compare": compare,
+        "start_date": start_date,
+        "end_date": end_date,
+    }
+    parsed = parse_page_filter(pages)
+    if parsed:
+        result["pages"] = parsed
+    return result
+
+
+def _range_kwargs(
+    range: str,
+    start_date: str | None,
+    end_date: str | None,
+    pages: str | None = None,
+) -> dict:
+    """Date/page params without compare — for endpoints that do not support comparison."""
+    result: dict = {
+        "range_key": range,
+        "start_date": start_date,
+        "end_date": end_date,
+    }
+    parsed = parse_page_filter(pages)
+    if parsed:
+        result["pages"] = parsed
+    return result
 
 
 @router.get("/debug")
@@ -99,15 +145,130 @@ async def ga4_debug(client_id: CurrentClientId, session: DbSession) -> dict:
     return result
 
 
+@router.get("/page-options")
+async def ga4_page_options(
+    client_id: CurrentClientId,
+    session: DbSession,
+    range: str = Query(default="month"),
+    start_date: str | None = Query(default=None, description="YYYY-MM-DD custom start"),
+    end_date: str | None = Query(default=None, description="YYYY-MM-DD custom end"),
+    limit: int = Query(default=200, ge=10, le=250),
+) -> dict:
+    """Merged GSC + GA4 page list for the dashboard page selector."""
+    return await fetch_page_options(
+        session,
+        client_id,
+        range_key=range,
+        start_date=start_date,
+        end_date=end_date,
+        limit=limit,
+    )
+
+
+@router.get("/gbp-performance")
+async def ga4_gbp_performance(
+    client_id: CurrentClientId,
+    session: DbSession,
+    range: str = Query(default="month"),
+    compare: bool = Query(default=False),
+    start_date: str | None = Query(default=None, description="YYYY-MM-DD custom start"),
+    end_date: str | None = Query(default=None, description="YYYY-MM-DD custom end"),
+) -> dict:
+    """GBP overview — interactions, calls, website clicks, directions + daily trend."""
+    return await fetch_gbp_performance(
+        session,
+        client_id,
+        range_key=range,
+        compare=compare,
+        start_date=start_date,
+        end_date=end_date,
+    )
+
+
+@router.get("/gsc-pages")
+async def ga4_gsc_pages(
+    client_id: CurrentClientId,
+    session: DbSession,
+    range: str = Query(default="month"),
+    start_date: str | None = Query(default=None, description="YYYY-MM-DD custom start"),
+    end_date: str | None = Query(default=None, description="YYYY-MM-DD custom end"),
+    limit: int = Query(default=25, ge=5, le=100),
+    pages: str | None = Query(default=None, description="Comma-separated page URLs to filter"),
+) -> dict:
+    """GSC top pages — clicks and impressions by landing page URL."""
+    return await fetch_gsc_top_pages(
+        session,
+        client_id,
+        limit=limit,
+        **_range_kwargs(range, start_date, end_date, pages),
+    )
+
+
+@router.get("/gsc-insights")
+async def ga4_gsc_insights(
+    client_id: CurrentClientId,
+    session: DbSession,
+    range: str = Query(default="month"),
+    start_date: str | None = Query(default=None, description="YYYY-MM-DD custom start"),
+    end_date: str | None = Query(default=None, description="YYYY-MM-DD custom end"),
+    limit: int = Query(default=20, ge=5, le=50),
+    pages: str | None = Query(default=None, description="Comma-separated page URLs to filter"),
+) -> dict:
+    """GSC content insights — top pages, trending up, trending down."""
+    return await fetch_gsc_content_insights(
+        session,
+        client_id,
+        limit=limit,
+        **_range_kwargs(range, start_date, end_date, pages),
+    )
+
+
+@router.get("/gsc-performance")
+async def ga4_gsc_performance(
+    client_id: CurrentClientId,
+    session: DbSession,
+    range: str = Query(default="month"),
+    compare: bool = Query(default=False),
+    start_date: str | None = Query(default=None, description="YYYY-MM-DD custom start"),
+    end_date: str | None = Query(default=None, description="YYYY-MM-DD custom end"),
+    pages: str | None = Query(default=None, description="Comma-separated page URLs to filter"),
+) -> dict:
+    """GSC daily clicks/impressions trend with period totals."""
+    return await fetch_gsc_performance(session, client_id, **_period_kwargs(range, compare, start_date, end_date, pages))
+
+
+@router.get("/keywords")
+async def ga4_keywords(
+    client_id: CurrentClientId,
+    session: DbSession,
+    range: str = Query(default="month"),
+    compare: bool = Query(default=False),
+    start_date: str | None = Query(default=None, description="YYYY-MM-DD custom start"),
+    end_date: str | None = Query(default=None, description="YYYY-MM-DD custom end"),
+    limit: int = Query(default=30, ge=5, le=100),
+    pages: str | None = Query(default=None, description="Comma-separated page URLs to filter"),
+) -> dict:
+    """Top Search Console queries with clicks, position, and Ahrefs search volume."""
+    return await fetch_gsc_keywords(
+        session,
+        client_id,
+        **_period_kwargs(range, compare, start_date, end_date, pages),
+        limit=limit,
+    )
+
+
 @router.get("/overview")
 async def ga4_overview(
     client_id: CurrentClientId,
     session: DbSession,
     range: str = Query(default="month", description="week|month|quarter|half|year"),
     compare: bool = Query(default=False, description="Include previous-period totals"),
+    start_date: str | None = Query(default=None, description="YYYY-MM-DD custom start"),
+    end_date: str | None = Query(default=None, description="YYYY-MM-DD custom end"),
+    pages: str | None = Query(default=None, description="Comma-separated page URLs to filter"),
 ) -> dict:
     """Daily trend — users, sessions, bounce rate, engagement time."""
-    return await fetch_overview(session, client_id, range_key=range, compare=compare)
+    return await fetch_overview(session, client_id, **_period_kwargs(range, compare, start_date, end_date, pages))
 
 
 @router.get("/pages")
@@ -116,10 +277,18 @@ async def ga4_pages(
     session: DbSession,
     range: str = Query(default="month"),
     compare: bool = Query(default=False),
+    start_date: str | None = Query(default=None, description="YYYY-MM-DD custom start"),
+    end_date: str | None = Query(default=None, description="YYYY-MM-DD custom end"),
     limit: int = Query(default=25, ge=5, le=100),
+    pages: str | None = Query(default=None, description="Comma-separated page URLs to filter"),
 ) -> dict:
     """Top pages by sessions with engagement metrics."""
-    return await fetch_pages(session, client_id, range_key=range, compare=compare, limit=limit)
+    return await fetch_pages(
+        session,
+        client_id,
+        **_period_kwargs(range, compare, start_date, end_date, pages),
+        limit=limit,
+    )
 
 
 @router.get("/channels")
@@ -128,9 +297,12 @@ async def ga4_channels(
     session: DbSession,
     range: str = Query(default="month"),
     compare: bool = Query(default=False),
+    start_date: str | None = Query(default=None, description="YYYY-MM-DD custom start"),
+    end_date: str | None = Query(default=None, description="YYYY-MM-DD custom end"),
+    pages: str | None = Query(default=None, description="Comma-separated page URLs to filter"),
 ) -> dict:
     """Traffic by channel — organic, paid social, direct, referral, etc."""
-    return await fetch_channels(session, client_id, range_key=range, compare=compare)
+    return await fetch_channels(session, client_id, **_period_kwargs(range, compare, start_date, end_date, pages))
 
 
 @router.get("/geo")
@@ -139,10 +311,18 @@ async def ga4_geo(
     session: DbSession,
     range: str = Query(default="month"),
     compare: bool = Query(default=False),
+    start_date: str | None = Query(default=None, description="YYYY-MM-DD custom start"),
+    end_date: str | None = Query(default=None, description="YYYY-MM-DD custom end"),
     limit: int = Query(default=30, ge=5, le=100),
+    pages: str | None = Query(default=None, description="Comma-separated page URLs to filter"),
 ) -> dict:
     """Top cities/suburbs by sessions."""
-    return await fetch_geo(session, client_id, range_key=range, compare=compare, limit=limit)
+    return await fetch_geo(
+        session,
+        client_id,
+        **_period_kwargs(range, compare, start_date, end_date, pages),
+        limit=limit,
+    )
 
 
 @router.get("/organic")
@@ -151,9 +331,15 @@ async def ga4_organic(
     session: DbSession,
     range: str = Query(default="month"),
     compare: bool = Query(default=False),
+    start_date: str | None = Query(default=None, description="YYYY-MM-DD custom start"),
+    end_date: str | None = Query(default=None, description="YYYY-MM-DD custom end"),
     limit: int = Query(default=25, ge=5, le=100),
+    pages: str | None = Query(default=None, description="Comma-separated page URLs to filter"),
 ) -> dict:
     """Top landing pages from organic search only."""
     return await fetch_organic_landing_pages(
-        session, client_id, range_key=range, compare=compare, limit=limit
+        session,
+        client_id,
+        **_period_kwargs(range, compare, start_date, end_date, pages),
+        limit=limit,
     )

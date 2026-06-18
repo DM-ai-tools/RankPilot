@@ -3,7 +3,11 @@ import {
   ArrowDown,
   ArrowUp,
   BarChart2,
+  Building2,
+  Calendar,
   Globe,
+  KeyRound,
+  Lightbulb,
   MapPin,
   Minus,
   RefreshCw,
@@ -15,15 +19,33 @@ import { useState } from "react";
 
 import {
   GA4_RANGE_LABELS,
+  type Ga4KeywordRow,
+  type Ga4PageFilter as Ga4PageFilterType,
+  type Ga4QueryDates,
   type Ga4RangeKey,
   type Ga4Row,
+  daysAgoIsoDate,
   fetchGa4Channels,
   fetchGa4Geo,
+  fetchGa4Keywords,
   fetchGa4Organic,
   fetchGa4Overview,
+  fetchGa4PageOptions,
   fetchGa4Pages,
+  fetchGbpPerformance,
+  fetchGscContentInsights,
+  fetchGscPerformance,
+  fetchGscTopPages,
+  formatGa4RangeLabel,
+  todayIsoDate,
 } from "../api/ga4";
 import { formatApiError } from "../api/client";
+import { Ga4PageFilter } from "../components/ga4/Ga4PageFilter";
+import { GbpPerformanceChart } from "../components/ga4/GbpPerformanceChart";
+import { GscContentInsights } from "../components/ga4/GscContentInsights";
+import { GscPerformanceChart } from "../components/ga4/GscPerformanceChart";
+import { GscTopPagesTable } from "../components/ga4/GscTopPagesTable";
+import { formatKeywordVolume } from "../api/keywords";
 import { TopBar } from "../components/layout/TopBar";
 import { Card } from "../components/ui/Card";
 import { useAuthStore } from "../stores/authStore";
@@ -158,16 +180,31 @@ function StatCard({
 // ── Range + compare toolbar ───────────────────────────────────────────────────
 
 function Toolbar({
-  range,
+  dates,
   compare,
-  onRange,
+  onPreset,
+  onCustomDates,
   onCompare,
 }: {
-  range: Ga4RangeKey;
+  dates: Ga4QueryDates;
   compare: boolean;
-  onRange: (r: Ga4RangeKey) => void;
+  onPreset: (r: Ga4RangeKey) => void;
+  onCustomDates: (start: string, end: string) => void;
   onCompare: (c: boolean) => void;
 }) {
+  const isCustom = Boolean(dates.startDate && dates.endDate);
+  const activePreset = isCustom ? null : (dates.range ?? "month");
+  const [showCalendar, setShowCalendar] = useState(false);
+  const [draftStart, setDraftStart] = useState(dates.startDate ?? daysAgoIsoDate(30));
+  const [draftEnd, setDraftEnd] = useState(dates.endDate ?? todayIsoDate());
+  const today = todayIsoDate();
+
+  const applyCustom = () => {
+    if (!draftStart || !draftEnd || draftStart > draftEnd) return;
+    onCustomDates(draftStart, draftEnd > today ? today : draftEnd);
+    setShowCalendar(false);
+  };
+
   return (
     <div className="flex flex-wrap items-center gap-2">
       <div className="flex overflow-hidden rounded-lg border border-rp-border">
@@ -175,9 +212,9 @@ function Toolbar({
           <button
             key={k}
             type="button"
-            onClick={() => onRange(k)}
+            onClick={() => onPreset(k)}
             className={`px-3 py-1.5 text-xs font-semibold transition-colors ${
-              range === k
+              activePreset === k
                 ? "bg-navy text-white"
                 : "bg-white text-rp-tmid hover:bg-[#F0F4FF]"
             }`}
@@ -186,6 +223,68 @@ function Toolbar({
           </button>
         ))}
       </div>
+
+      <div className="relative">
+        <button
+          type="button"
+          onClick={() => setShowCalendar((v) => !v)}
+          className={`flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-semibold transition-colors ${
+            isCustom
+              ? "border-[#6366f1] bg-[#EEF2FF] text-[#6366f1]"
+              : "border-rp-border bg-white text-rp-tmid hover:bg-[#F0F4FF]"
+          }`}
+        >
+          <Calendar className="h-3.5 w-3.5" />
+          {isCustom ? `${dates.startDate} – ${dates.endDate}` : "Custom range"}
+        </button>
+
+        {showCalendar && (
+          <div className="absolute right-0 z-30 mt-2 w-[280px] rounded-lg border border-rp-border bg-white p-3 shadow-lg">
+            <p className="mb-2 text-xs font-semibold text-navy">Choose date range</p>
+            <div className="space-y-2">
+              <label className="block text-[11px] text-rp-tlight">
+                Start date
+                <input
+                  type="date"
+                  value={draftStart}
+                  max={draftEnd || today}
+                  onChange={(e) => setDraftStart(e.target.value)}
+                  className="mt-1 w-full rounded-md border border-rp-border px-2 py-1.5 text-xs text-navy"
+                />
+              </label>
+              <label className="block text-[11px] text-rp-tlight">
+                End date
+                <input
+                  type="date"
+                  value={draftEnd}
+                  min={draftStart}
+                  max={today}
+                  onChange={(e) => setDraftEnd(e.target.value)}
+                  className="mt-1 w-full rounded-md border border-rp-border px-2 py-1.5 text-xs text-navy"
+                />
+              </label>
+            </div>
+            <div className="mt-3 flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setShowCalendar(false)}
+                className="rounded-md border border-rp-border px-2.5 py-1 text-xs text-rp-tmid hover:bg-gray-50"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={applyCustom}
+                disabled={!draftStart || !draftEnd || draftStart > draftEnd}
+                className="rounded-md bg-navy px-2.5 py-1 text-xs font-semibold text-white disabled:opacity-50"
+              >
+                Apply
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+
       <button
         type="button"
         onClick={() => onCompare(!compare)}
@@ -203,20 +302,38 @@ function Toolbar({
 
 // ── Not connected banner ──────────────────────────────────────────────────────
 
-function NotConnected({ error }: { error: unknown }) {
+function NotConnected({ error, context }: { error: unknown; context?: "ga4" | "gbp" | "gsc" }) {
   const msg = formatApiError(error);
   const needsEnable = msg.includes("not enabled") || msg.includes("not been used") || msg.includes("Enable it");
   const needsReconnect = msg.includes("scope") || msg.includes("reconnect") || msg.includes("disconnect");
-  const needsSetup = msg.includes("not connected") || msg.includes("No GA4 property") || msg.includes("property selected");
+  const needsSetup =
+    msg.includes("not connected") ||
+    msg.includes("No GA4 property") ||
+    msg.includes("property selected") ||
+    msg.includes("Business Profile location");
+
+  const title =
+    context === "gbp"
+      ? needsEnable
+        ? "Business Profile API not enabled"
+        : needsReconnect
+          ? "GBP needs to be reconnected"
+          : needsSetup
+            ? "GBP not connected or location not selected"
+            : "Business Profile error"
+      : context === "gsc"
+        ? "Search Console error"
+        : needsEnable
+          ? "GA4 Data API not enabled in Google Cloud"
+          : needsReconnect
+            ? "GA4 needs to be reconnected"
+            : needsSetup
+              ? "GA4 not connected or property not selected"
+              : "GA4 access error";
 
   return (
     <div className="rounded-xl border border-amber-200 bg-amber-50 p-5">
-      <p className="font-semibold text-amber-800">
-        {needsEnable ? "GA4 Data API not enabled in Google Cloud" :
-         needsReconnect ? "GA4 needs to be reconnected" :
-         needsSetup ? "GA4 not connected or property not selected" :
-         "GA4 access error"}
-      </p>
+      <p className="font-semibold text-amber-800">{title}</p>
       <p className="mt-1 text-sm text-amber-700">{msg}</p>
       <div className="mt-3 flex flex-wrap gap-2">
         {needsEnable && (
@@ -281,6 +398,7 @@ function Section({
   children,
   loading,
   error,
+  errorContext,
 }: {
   title: string;
   subtitle?: string;
@@ -288,12 +406,19 @@ function Section({
   children: React.ReactNode;
   loading?: boolean;
   error?: unknown;
+  errorContext?: "ga4" | "gbp" | "gsc";
 }) {
   return (
     <Card>
       <SectionHeader title={title} subtitle={subtitle} icon={Icon} />
       <div className="p-4">
-        {error ? <NotConnected error={error} /> : loading ? <Skeleton /> : children}
+        {error ? (
+          <NotConnected error={error} context={errorContext} />
+        ) : loading ? (
+          <Skeleton />
+        ) : (
+          children
+        )}
       </div>
     </Card>
   );
@@ -304,9 +429,9 @@ function Section({
 function PagesTable({ rows, compared }: { rows: Ga4Row[]; compared: boolean }) {
   if (!rows.length) return <p className="text-sm text-rp-tlight">No page data for this period.</p>;
   return (
-    <div className="overflow-x-auto">
+    <div className="max-h-[420px] overflow-auto">
       <table className="w-full text-left text-xs">
-        <thead>
+        <thead className="sticky top-0 z-10 bg-white">
           <tr className="border-b border-rp-border text-rp-tlight">
             <th className="pb-2 pr-4 font-semibold">#</th>
             <th className="pb-2 pr-4 font-semibold">Page</th>
@@ -385,8 +510,8 @@ function GeoTable({ rows }: { rows: Ga4Row[] }) {
   if (!rows.length) return <p className="text-sm text-rp-tlight">No location data.</p>;
   const maxSessions = Math.max(...rows.map((r) => Number(r.sessions ?? 0)), 1);
   return (
-    <div className="space-y-2">
-      {rows.slice(0, 20).map((row, i) => {
+    <div className="max-h-[420px] space-y-2 overflow-auto pr-1">
+      {rows.map((row, i) => {
         const city = String(row.city ?? "Unknown");
         const region = String(row.region ?? "");
         const country = String(row.country ?? "");
@@ -424,50 +549,183 @@ function OverviewChart({ rows, metric, color }: { rows: Ga4Row[]; metric: string
   return <MiniBar values={values} color={color} height={48} />;
 }
 
+// ── GSC keywords table ────────────────────────────────────────────────────────
+
+function KeywordsTable({
+  rows,
+  compared,
+  volumeSource,
+}: {
+  rows: Ga4KeywordRow[];
+  compared: boolean;
+  volumeSource?: string;
+}) {
+  if (!rows.length) {
+    return <p className="text-sm text-rp-tlight">No search queries for this period.</p>;
+  }
+  return (
+    <div>
+      {volumeSource === "none" && (
+        <p className="mb-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+          Search volume unavailable — set AHREFS_API_KEY in backend to show monthly search volume.
+        </p>
+      )}
+      {volumeSource === "ahrefs_error" && (
+        <p className="mb-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+          Ahrefs volume lookup failed (credits or rate limit). GSC clicks and position still shown.
+        </p>
+      )}
+      <div className="max-h-[420px] overflow-auto">
+        <table className="w-full text-left text-xs">
+          <thead className="sticky top-0 z-10 bg-white">
+            <tr className="border-b border-rp-border text-rp-tlight">
+              <th className="pb-2 pr-4 font-semibold">#</th>
+              <th className="pb-2 pr-4 font-semibold">Keyword</th>
+              <th className="pb-2 pr-4 text-right font-semibold">Volume</th>
+              <th className="pb-2 pr-4 text-right font-semibold">Clicks</th>
+              <th className="pb-2 pr-4 text-right font-semibold">Impressions</th>
+              <th className="pb-2 pr-4 text-right font-semibold">CTR</th>
+              <th className="pb-2 text-right font-semibold">Avg position</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-rp-border">
+            {rows.map((row, i) => (
+              <tr key={`${row.keyword}-${i}`} className="hover:bg-[#FAFBFC]">
+                <td className="py-2 pr-4 text-rp-tlight">{i + 1}</td>
+                <td className="py-2 pr-4 max-w-[260px]">
+                  <p className="truncate font-medium text-navy" title={row.keyword}>{row.keyword}</p>
+                </td>
+                <td className="py-2 pr-4 text-right font-semibold text-[#6366f1]">
+                  {row.volume_display ?? formatKeywordVolume(row.volume)}
+                </td>
+                <td className="py-2 pr-4 text-right text-navy">
+                  <div className="flex flex-col items-end gap-0.5">
+                    <span className="font-semibold">{fmt(row.clicks)}</span>
+                    {compared && row.prev_clicks != null && (
+                      <Delta curr={row.clicks} prev={row.prev_clicks} />
+                    )}
+                  </div>
+                </td>
+                <td className="py-2 pr-4 text-right text-rp-tmid">{fmt(row.impressions)}</td>
+                <td className="py-2 pr-4 text-right text-rp-tmid">{fmtPct(row.ctr)}</td>
+                <td className="py-2 text-right text-rp-tmid">{row.position.toFixed(1)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
 // ── Main page ─────────────────────────────────────────────────────────────────
 
 export function Ga4Page() {
   const token = useAuthStore((s) => s.accessToken);
-  const [range, setRange] = useState<Ga4RangeKey>("month");
+  const [presetRange, setPresetRange] = useState<Ga4RangeKey>("month");
+  const [customStart, setCustomStart] = useState("");
+  const [customEnd, setCustomEnd] = useState("");
+  const [useCustom, setUseCustom] = useState(false);
   const [compare, setCompare] = useState(false);
+  const [selectedPages, setSelectedPages] = useState<string[]>([]);
 
-  const qk = [token, range, compare] as const;
+  const queryDates: Ga4QueryDates =
+    useCustom && customStart && customEnd
+      ? { startDate: customStart, endDate: customEnd }
+      : { range: presetRange };
+
+  const pageFilter: Ga4PageFilterType | undefined =
+    selectedPages.length > 0 ? { pages: selectedPages } : undefined;
+
+  const rangeLabel = formatGa4RangeLabel(queryDates);
+  const baseQk = [token, useCustom, presetRange, customStart, customEnd, compare] as const;
+  const filterQk = [...baseQk, selectedPages.join("|")] as const;
+
+  const pageOptionsQ = useQuery({
+    queryKey: ["ga4", "page-options", ...baseQk],
+    queryFn: () => fetchGa4PageOptions(queryDates, 200),
+    enabled: Boolean(token),
+    staleTime: 5 * 60_000,
+    retry: 1,
+  });
+
+  const pageOptions = pageOptionsQ.data?.rows.map((r) => r.page) ?? [];
 
   const overviewQ = useQuery({
-    queryKey: ["ga4", "overview", ...qk],
-    queryFn: () => fetchGa4Overview(range, compare),
+    queryKey: ["ga4", "overview", ...filterQk],
+    queryFn: () => fetchGa4Overview(queryDates, compare, pageFilter),
     enabled: Boolean(token),
     staleTime: 5 * 60_000,
     retry: 1,
   });
 
   const pagesQ = useQuery({
-    queryKey: ["ga4", "pages", ...qk],
-    queryFn: () => fetchGa4Pages(range, compare, 25),
+    queryKey: ["ga4", "pages", ...filterQk],
+    queryFn: () => fetchGa4Pages(queryDates, compare, 25, pageFilter),
     enabled: Boolean(token),
     staleTime: 5 * 60_000,
     retry: 1,
   });
 
   const channelsQ = useQuery({
-    queryKey: ["ga4", "channels", ...qk],
-    queryFn: () => fetchGa4Channels(range, compare),
+    queryKey: ["ga4", "channels", ...filterQk],
+    queryFn: () => fetchGa4Channels(queryDates, compare, pageFilter),
     enabled: Boolean(token),
     staleTime: 5 * 60_000,
     retry: 1,
   });
 
   const geoQ = useQuery({
-    queryKey: ["ga4", "geo", ...qk],
-    queryFn: () => fetchGa4Geo(range, compare, 30),
+    queryKey: ["ga4", "geo", ...filterQk],
+    queryFn: () => fetchGa4Geo(queryDates, compare, 30, pageFilter),
     enabled: Boolean(token),
     staleTime: 5 * 60_000,
     retry: 1,
   });
 
   const organicQ = useQuery({
-    queryKey: ["ga4", "organic", ...qk],
-    queryFn: () => fetchGa4Organic(range, compare, 25),
+    queryKey: ["ga4", "organic", ...filterQk],
+    queryFn: () => fetchGa4Organic(queryDates, compare, 25, pageFilter),
+    enabled: Boolean(token),
+    staleTime: 5 * 60_000,
+    retry: 1,
+  });
+
+  const keywordsQ = useQuery({
+    queryKey: ["ga4", "keywords", ...filterQk],
+    queryFn: () => fetchGa4Keywords(queryDates, compare, 30, pageFilter),
+    enabled: Boolean(token),
+    staleTime: 5 * 60_000,
+    retry: 1,
+  });
+
+  const gbpPerfQ = useQuery({
+    queryKey: ["ga4", "gbp-performance", ...baseQk],
+    queryFn: () => fetchGbpPerformance(queryDates, compare),
+    enabled: Boolean(token),
+    staleTime: 5 * 60_000,
+    retry: 1,
+  });
+
+  const gscPagesQ = useQuery({
+    queryKey: ["ga4", "gsc-pages", ...filterQk],
+    queryFn: () => fetchGscTopPages(queryDates, 25, pageFilter),
+    enabled: Boolean(token),
+    staleTime: 5 * 60_000,
+    retry: 1,
+  });
+
+  const gscInsightsQ = useQuery({
+    queryKey: ["ga4", "gsc-insights", ...filterQk],
+    queryFn: () => fetchGscContentInsights(queryDates, 20, pageFilter),
+    enabled: Boolean(token),
+    staleTime: 5 * 60_000,
+    retry: 1,
+  });
+
+  const gscPerfQ = useQuery({
+    queryKey: ["ga4", "gsc-performance", ...filterQk],
+    queryFn: () => fetchGscPerformance(queryDates, compare, pageFilter),
     enabled: Boolean(token),
     staleTime: 5 * 60_000,
     retry: 1,
@@ -477,6 +735,12 @@ export function Ga4Page() {
   const totals = overviewQ.data?.totals?.current ?? {};
   const prevTotals = overviewQ.data?.totals?.previous ?? {};
   const overviewRows = overviewQ.data?.rows ?? [];
+  const pageFilterLabel =
+    selectedPages.length === 1
+      ? "1 page selected"
+      : selectedPages.length > 1
+        ? `${selectedPages.length} pages selected`
+        : null;
 
   return (
     <div className="min-h-screen bg-[#F7F8FC]">
@@ -488,11 +752,48 @@ export function Ga4Page() {
           <div>
             <h1 className="text-xl font-bold text-navy">Google Analytics 4</h1>
             <p className="mt-0.5 text-sm text-rp-tlight">
-              Traffic, page performance, channel mix and suburb-level geography — live from your GA4 property.
+              GA4 traffic, Business Profile actions, Search Console keywords, channel mix and suburb-level geography.
             </p>
           </div>
-          <Toolbar range={range} compare={compare} onRange={setRange} onCompare={setCompare} />
         </div>
+
+        {/* Filters bar */}
+        <div className="rounded-xl border border-rp-border bg-white p-3 shadow-sm">
+          <div className="flex flex-wrap items-end gap-4">
+            <Ga4PageFilter
+              options={pageOptions}
+              selected={selectedPages}
+              onChange={setSelectedPages}
+              loading={pageOptionsQ.isLoading}
+              error={pageOptionsQ.error}
+              warnings={pageOptionsQ.data?.warnings}
+            />
+            <div className="min-w-0 flex-1">
+              <p className="mb-1.5 text-[11px] font-semibold uppercase tracking-wide text-rp-tlight">Date range</p>
+              <Toolbar
+                dates={queryDates}
+                compare={compare}
+                onPreset={(r) => {
+                  setUseCustom(false);
+                  setPresetRange(r);
+                }}
+                onCustomDates={(start, end) => {
+                  setUseCustom(true);
+                  setCustomStart(start);
+                  setCustomEnd(end);
+                }}
+                onCompare={setCompare}
+              />
+            </div>
+          </div>
+        </div>
+
+        {pageFilterLabel && (
+          <div className="rounded-lg border border-[#c7d2fe] bg-[#EEF2FF] px-4 py-2 text-xs text-[#4338ca]">
+            Dashboard filtered to <span className="font-semibold">{pageFilterLabel}</span>. Business Profile card still
+            shows full location data.
+          </div>
+        )}
 
         {/* Global error */}
         {anyError && !overviewQ.isLoading && (
@@ -545,7 +846,7 @@ export function Ga4Page() {
           <Card>
             <SectionHeader
               title="Traffic trend"
-              subtitle={`${GA4_RANGE_LABELS[range]} · daily active users`}
+              subtitle={`${rangeLabel} · daily active users`}
               icon={TrendingUp}
             />
             <div className="grid grid-cols-1 gap-4 p-4 sm:grid-cols-3">
@@ -588,6 +889,67 @@ export function Ga4Page() {
           </Section>
         </div>
 
+        {/* ── GBP performance chart ── */}
+        <Section
+          title="Business Profile overview"
+          subtitle={`${rangeLabel} · interactions, calls, website clicks and directions`}
+          icon={Building2}
+          loading={gbpPerfQ.isLoading}
+          error={gbpPerfQ.error}
+          errorContext="gbp"
+        >
+          {gbpPerfQ.data ? <GbpPerformanceChart data={gbpPerfQ.data} /> : null}
+        </Section>
+
+        {/* ── GSC performance chart ── */}
+        <Section
+          title="Search performance (Google Search Console)"
+          subtitle={`${rangeLabel} · daily clicks and impressions`}
+          icon={Search}
+          loading={gscPerfQ.isLoading}
+          error={gscPerfQ.error}
+          errorContext="gsc"
+        >
+          {gscPerfQ.data ? <GscPerformanceChart data={gscPerfQ.data} /> : null}
+        </Section>
+
+        {/* ── GSC top pages ── */}
+        <Section
+          title="Top pages (Google Search Console)"
+          subtitle={`${rangeLabel} · pages ranked by search clicks`}
+          icon={Globe}
+          loading={gscPagesQ.isLoading}
+          error={gscPagesQ.error}
+        >
+          <GscTopPagesTable rows={gscPagesQ.data?.rows ?? []} />
+        </Section>
+
+        {/* ── GSC content insights ── */}
+        <Section
+          title="Insights — your content (Search Console)"
+          subtitle={`${rangeLabel} vs previous period · top pages and click trends`}
+          icon={Lightbulb}
+          loading={gscInsightsQ.isLoading}
+          error={gscInsightsQ.error}
+        >
+          {gscInsightsQ.data ? <GscContentInsights data={gscInsightsQ.data} /> : null}
+        </Section>
+
+        {/* ── GSC keywords + volume ── */}
+        <Section
+          title="Search keywords (Google Search Console)"
+          subtitle="Top queries driving clicks — monthly search volume from Ahrefs"
+          icon={KeyRound}
+          loading={keywordsQ.isLoading}
+          error={keywordsQ.error}
+        >
+          <KeywordsTable
+            rows={keywordsQ.data?.rows ?? []}
+            compared={compare}
+            volumeSource={keywordsQ.data?.volume_source}
+          />
+        </Section>
+
         {/* ── Organic landing pages ── */}
         <Section
           title="Organic search landing pages"
@@ -612,7 +974,7 @@ export function Ga4Page() {
 
         {/* Footer note */}
         <p className="text-center text-[11px] text-rp-tlight">
-          Data sourced live from your GA4 property via the Google Analytics Data API.
+          GA4 traffic from Google Analytics Data API · Business Profile from GBP Performance API · Keywords from Search Console + Ahrefs volume.
           {compare && " Comparison = previous equivalent period."}
         </p>
       </div>
