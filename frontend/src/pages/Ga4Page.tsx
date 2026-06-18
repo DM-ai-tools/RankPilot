@@ -205,18 +205,37 @@ function Toolbar({
 
 function NotConnected({ error }: { error: unknown }) {
   const msg = formatApiError(error);
-  const isNotConnected = msg.includes("not connected") || msg.includes("reconnect") || msg.includes("property");
+  const needsEnable = msg.includes("not enabled") || msg.includes("not been used") || msg.includes("Enable it");
+  const needsReconnect = msg.includes("scope") || msg.includes("reconnect") || msg.includes("disconnect");
+  const needsSetup = msg.includes("not connected") || msg.includes("No GA4 property") || msg.includes("property selected");
+
   return (
-    <div className="rounded-xl border border-amber-200 bg-amber-50 p-6 text-center">
+    <div className="rounded-xl border border-amber-200 bg-amber-50 p-5">
       <p className="font-semibold text-amber-800">
-        {isNotConnected ? "GA4 not connected or no property selected" : "GA4 error"}
+        {needsEnable ? "GA4 Data API not enabled in Google Cloud" :
+         needsReconnect ? "GA4 needs to be reconnected" :
+         needsSetup ? "GA4 not connected or property not selected" :
+         "GA4 access error"}
       </p>
       <p className="mt-1 text-sm text-amber-700">{msg}</p>
-      {isNotConnected && (
-        <p className="mt-2 text-xs text-amber-600">
-          Go to <strong>Business Setup</strong> → connect Google Analytics 4 and select your property.
-        </p>
-      )}
+      <div className="mt-3 flex flex-wrap gap-2">
+        {needsEnable && (
+          <a
+            href="https://console.cloud.google.com/apis/library/analyticsdata.googleapis.com"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="rounded-md bg-amber-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-amber-700"
+          >
+            Enable GA4 Data API in Google Cloud →
+          </a>
+        )}
+        <a
+          href="/onboarding"
+          className="rounded-md border border-amber-400 bg-white px-3 py-1.5 text-xs font-semibold text-amber-700 hover:bg-amber-50"
+        >
+          {needsReconnect ? "Reconnect GA4 in Business Setup" : "Go to Business Setup →"}
+        </a>
+      </div>
     </div>
   );
 }

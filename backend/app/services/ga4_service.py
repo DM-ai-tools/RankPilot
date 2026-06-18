@@ -89,25 +89,55 @@ async def _run_report(
             detail=f"GA4 API request failed: {exc}",
         ) from exc
 
-    if r.status_code == 403:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="GA4 access denied — reconnect GA4 in Business Setup.",
-        )
-    if r.status_code == 404:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="GA4 property not found. Reselect your GA4 property in Business Setup.",
-        )
     if not r.is_success:
-        detail = r.text[:300]
+        # Extract the real Google error message for diagnosis
+        raw_detail = r.text[:600]
+        google_msg = ""
         try:
-            detail = r.json().get("error", {}).get("message") or detail
+            err_obj = r.json().get("error", {})
+            google_msg = str(err_obj.get("message") or "").strip()
         except Exception:
             pass
+
+        if r.status_code == 403:
+            # Identify the most common causes
+            low = (google_msg or raw_detail).lower()
+            if "disabled" in low or "has not been used" in low or "enable it" in low:
+                detail = (
+                    "Google Analytics Data API is not enabled in your Google Cloud project. "
+                    "Enable it at console.cloud.google.com → APIs & Services → Library → "
+                    "'Google Analytics Data API'. Then disconnect and reconnect GA4."
+                )
+            elif "insufficient authentication scopes" in low or "scope" in low:
+                detail = (
+                    "GA4 token is missing the analytics.readonly scope. "
+                    "Go to Business Setup → disconnect GA4 → reconnect it to grant fresh permissions."
+                )
+            elif "permission" in low or "caller does not have" in low:
+                detail = (
+                    "Your Google account does not have access to this GA4 property. "
+                    f"Google said: {google_msg or raw_detail[:200]}"
+                )
+            else:
+                detail = (
+                    f"GA4 access denied (403). "
+                    f"Google said: {google_msg or raw_detail[:200]}. "
+                    "Try disconnecting and reconnecting GA4 in Business Setup."
+                )
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=detail)
+
+        if r.status_code == 404:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=(
+                    f"GA4 property not found (404). {google_msg or ''} "
+                    "Reselect your GA4 property in Business Setup."
+                ).strip(),
+            )
+
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"GA4 API error ({r.status_code}): {detail}",
+            detail=f"GA4 API error ({r.status_code}): {google_msg or raw_detail}",
         )
     return r.json()
 
