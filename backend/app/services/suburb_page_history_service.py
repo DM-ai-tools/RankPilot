@@ -99,8 +99,26 @@ def _row_to_item(row: dict) -> dict:
     }
 
 
+async def _backfill_history_from_wordpress_when_empty(
+    session: AsyncSession, client_id: UUID
+) -> None:
+    """Production DBs start empty — import RankPilot-published WP pages on first load."""
+    count = (
+        await session.execute(
+            text("SELECT COUNT(*) FROM rp_suburb_page_history WHERE client_id = :cid"),
+            {"cid": str(client_id)},
+        )
+    ).scalar_one()
+    if int(count or 0) > 0:
+        return
+    await _published_ranking_sources(
+        session, client_id, persist_backfill=True, discover_wp_pages=True
+    )
+
+
 async def list_history(session: AsyncSession, client_id: UUID, *, limit: int = 50) -> list[dict]:
     await ensure_suburb_page_history_table(session)
+    await _backfill_history_from_wordpress_when_empty(session, client_id)
     rows = (
         await session.execute(
             text(
@@ -854,6 +872,17 @@ async def _published_ranking_sources(
         logger.warning("WordPress pages unavailable for rankings", exc_info=True)
         wp_pages = []
 
+    # Empty prod DB: derive slug family (e.g. ai-seo-*) from RankPilot WP pages first.
+    if discover_wp_pages and not history_slugs and wp_pages:
+        seed_slugs: set[str] = set()
+        for page in wp_pages:
+            slug = str(page.get("slug") or "").strip().lower()
+            if slug and is_rankpilot_wordpress_html(str(page.get("content_html") or "")):
+                seed_slugs.add(slug)
+        if seed_slugs:
+            history_slugs = seed_slugs
+            slug_prefixes = _suburb_slug_prefixes(history_slugs)
+
     for page in wp_pages:
         slug = str(page.get("slug") or "").strip()
         if not slug:
@@ -903,6 +932,10 @@ async def get_published_suburb_page_rankings(session: AsyncSession, client_id: U
     await _ensure_tracker_tables()
 
     sources = await _published_ranking_sources(session, client_id, discover_wp_pages=False)
+    if not sources:
+        sources = await _published_ranking_sources(
+            session, client_id, persist_backfill=True, discover_wp_pages=True
+        )
     out: list[dict] = []
     for src in sources:
         out.append(

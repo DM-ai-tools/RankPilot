@@ -102,7 +102,8 @@ export function SuburbPageRankingsCard({ enabled, token }: Props) {
           <p className="text-sm text-red-600">{formatApiError(rankingsQ.error)}</p>
         ) : items.length === 0 ? (
           <p className="text-sm text-rp-tlight">
-            Publish a suburb page above — only RankPilot-published pages appear here with weekly Google rank status.
+            No RankPilot-published suburb pages found yet. Click{" "}
+            <strong>Refresh rankings</strong> to import them from WordPress, or publish a suburb page above.
           </p>
         ) : (
           <div className="max-h-[360px] overflow-auto rounded-md border border-rp-border">

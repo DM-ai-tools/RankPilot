@@ -743,6 +743,10 @@ export function SeoWebsitePage() {
               </Card>
             </div>
 
+            <div className="mt-4" id="published-page-rankings">
+              <SuburbPageRankingsCard enabled={wpConnected} token={token} />
+            </div>
+
             <div className="mt-4" id="suburb-landing-builder">
               <Card>
                 <CardHeader
@@ -1358,10 +1362,6 @@ export function SeoWebsitePage() {
                   ) : null}
                 </div>
               </Card>
-            </div>
-
-            <div className="mt-4">
-              <SuburbPageRankingsCard enabled={wpConnected} token={token} />
             </div>
 
             <div className="mt-4 grid gap-4 lg:grid-cols-2">
