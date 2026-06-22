@@ -164,7 +164,65 @@ class DataForSEOClient:
             # Business not in pack but we already have local results — skip wider zoom.
             if len(items) >= _MIN_MAPS_ITEMS_TO_STOP:
                 return None, items
-        return None, last_nonempty
+        return rank, last_nonempty
+
+    async def get_google_organic_rank(
+        self,
+        keyword: str,
+        business_url: str,
+        *,
+        page_url: str | None = None,
+        business_name: str | None = None,
+        lat: float | None = None,
+        lng: float | None = None,
+        se_domain: str = "google.com.au",
+    ) -> int | None:
+        """Live Google organic position via DataForSEO (localized when lat/lng provided)."""
+        kw = (keyword or "").strip()
+        if not kw:
+            return None
+        task: dict[str, object] = {
+            "keyword": kw,
+            "language_code": "en",
+            "device": "desktop",
+            "os": "windows",
+            "se_domain": se_domain,
+            "depth": 50,
+        }
+        if lat is not None and lng is not None:
+            task["location_coordinate"] = _serp_location_coordinate(lat, lng, zoom=15)
+        else:
+            task["location_name"] = "Australia"
+
+        c = self._http()
+        try:
+            r = await c.post(f"{_BASE}/serp/google/organic/live/advanced", json=[task])
+            r.raise_for_status()
+            data = r.json()
+        except Exception as exc:
+            logger.warning("DataForSEO organic live failed for %r: %s", kw, exc)
+            return None
+
+        tasks = (data.get("tasks") or [{}])[0]
+        if tasks.get("status_code") != 20000:
+            logger.warning(
+                "DataForSEO organic live status %s: %s",
+                tasks.get("status_code"),
+                tasks.get("status_message"),
+            )
+            return None
+        result = tasks.get("result") or []
+        if not isinstance(result, list) or not result:
+            return None
+        items = result[0].get("items") if isinstance(result[0], dict) else []
+        if not isinstance(items, list):
+            return None
+        return self._find_organic_rank(
+            items,
+            business_url,
+            page_url=page_url,
+            business_name=business_name,
+        )
 
     async def get_maps_rank(
         self,
@@ -769,6 +827,51 @@ class DataForSEOClient:
                 continue
             return infer_maps_pack_rank(item, pack_order)
         return None
+
+    def _find_organic_rank(
+        self,
+        items: list[dict],
+        business_url: str,
+        *,
+        page_url: str | None = None,
+        business_name: str | None = None,
+    ) -> int | None:
+        """Best organic rank for business URL (optional landing page path match)."""
+        from urllib.parse import urlparse
+
+        target = _domain(business_url)
+        brand_hint = (business_name or "").strip().lower() or _brand_hint_from_url(business_url)
+        page_path = urlparse(page_url).path.rstrip("/").lower() if page_url else ""
+        best: int | None = None
+        organic_order = 0
+
+        def _url_matches(raw: object) -> bool:
+            if not raw or not isinstance(raw, str):
+                return False
+            raw_l = raw.lower()
+            if target and target in raw_l:
+                return True
+            d = _domain(raw)
+            return bool(d) and bool(target) and (d == target or d.endswith("." + target))
+
+        for item in items:
+            if str(item.get("type") or "") != "organic":
+                continue
+            organic_order += 1
+            try:
+                rank = int(item.get("rank_group") or item.get("rank_absolute") or organic_order)
+            except (TypeError, ValueError):
+                rank = organic_order
+            url = str(item.get("url") or item.get("breadcrumb") or "")
+            title = str(item.get("title") or item.get("description") or "")
+            if not _url_matches(url) and brand_hint and brand_hint not in title.lower():
+                continue
+            if page_path:
+                url_path = urlparse(url).path.rstrip("/").lower() if url else ""
+                if not (page_path in url_path or url_path.endswith(page_path)):
+                    continue
+            best = rank if best is None else min(best, rank)
+        return best
 
     async def google_business_updates_fetch_block(
         self,

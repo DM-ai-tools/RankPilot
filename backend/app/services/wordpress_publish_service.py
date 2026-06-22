@@ -88,6 +88,23 @@ def extract_rankpilot_figures(html_content: str) -> list[str]:
     return _RANKPILOT_FIGURE_RE.findall(html_content or "")
 
 
+_RANKPILOT_PAGE_MARKERS = (
+    "rankpilot-page-image",
+    "rankpilot-faq-accordion",
+    "rankpilot-page-content",
+    "rankpilot-published",
+    "<!--rankpilot",
+)
+
+RANKPILOT_PUBLISHED_HTML_MARKER = "<!-- rankpilot-published -->"
+
+
+def is_rankpilot_wordpress_html(html: str) -> bool:
+    """True when page body was generated or saved through RankPilot."""
+    h = (html or "").lower()
+    return any(marker in h for marker in _RANKPILOT_PAGE_MARKERS)
+
+
 def embed_rankpilot_figures_in_body(body_html: str, figures: list[str]) -> str:
     """Prepend hero figure and insert a second figure mid-page when present."""
     if not figures:
@@ -588,6 +605,8 @@ async def publish_page_with_images(
         if len(uploaded) >= 2 and uploaded[1][1]:
             figures.append(_wp_figure_html(uploaded[1][1], alt_base, layout="inline"))
         final_html = embed_rankpilot_figures_in_body(body_html, figures)
+        if RANKPILOT_PUBLISHED_HTML_MARKER not in final_html:
+            final_html = f"{final_html}\n{RANKPILOT_PUBLISHED_HTML_MARKER}"
 
         slug = _slug_from_target_hint(target_url_hint) or _slugify(title)
         payload: dict = {
@@ -670,3 +689,111 @@ async def delete_wordpress_page(
         status_code=status.HTTP_502_BAD_GATEWAY,
         detail=f"WordPress delete failed ({r.status_code}): {detail}",
     )
+
+
+def _wp_page_summary_from_row(r: dict) -> dict[str, str | int] | None:
+    if str(r.get("status") or "").strip().lower() not in ("publish", "published"):
+        return None
+    try:
+        pid = int(r.get("id"))
+    except (TypeError, ValueError):
+        return None
+    slug = str(r.get("slug") or "").strip()
+    if not slug:
+        return None
+    title_field = r.get("title")
+    if isinstance(title_field, dict):
+        title = re.sub(
+            r"<[^>]+>",
+            "",
+            str(title_field.get("rendered") or title_field.get("raw") or ""),
+        ).strip()
+    else:
+        title = str(title_field or "").strip()
+    content_field = r.get("content")
+    rendered = ""
+    if isinstance(content_field, dict):
+        rendered = str(content_field.get("rendered") or "")
+    elif isinstance(content_field, str):
+        rendered = content_field
+    return {
+        "id": pid,
+        "title": title or f"Page {pid}",
+        "slug": slug,
+        "link": str(r.get("link") or "").strip(),
+        "content_html": rendered,
+    }
+
+
+async def _fetch_published_wp_pages(
+    session: AsyncSession,
+    client_id: UUID,
+    *,
+    per_page: int = 100,
+) -> list[dict[str, str | int]]:
+    import urllib.parse
+
+    site, wp_user, app_password = await _load_wp_credentials(session, client_id)
+    qs = urllib.parse.urlencode(
+        {
+            "per_page": max(1, min(per_page, 100)),
+            "status": "publish",
+            "orderby": "modified",
+            "order": "desc",
+            "_fields": "id,link,slug,title,status,content",
+        }
+    )
+    url = f"{site}/wp-json/wp/v2/pages?{qs}"
+    async with httpx.AsyncClient(timeout=30, follow_redirects=True) as http:
+        resp = await http.get(
+            url,
+            auth=(wp_user, app_password),
+            headers={"Accept": "application/json", "User-Agent": "RankPilot/1.0 (WP pages)"},
+        )
+    if not resp.is_success:
+        logger.warning("WordPress pages fetch failed (%s)", resp.status_code)
+        return []
+    payload = resp.json()
+    rows = payload if isinstance(payload, list) else []
+    out: list[dict[str, str | int]] = []
+    for r in rows:
+        if not isinstance(r, dict):
+            continue
+        parsed = _wp_page_summary_from_row(r)
+        if parsed:
+            out.append(parsed)
+    return out
+
+
+async def list_rankpilot_wordpress_pages(
+    session: AsyncSession,
+    client_id: UUID,
+    *,
+    per_page: int = 100,
+) -> list[dict[str, str | int]]:
+    """Published WP pages whose HTML contains RankPilot markers (not all WP pages)."""
+    pages = await _fetch_published_wp_pages(session, client_id, per_page=per_page)
+    out: list[dict[str, str | int]] = []
+    for page in pages:
+        if is_rankpilot_wordpress_html(str(page.get("content_html") or "")):
+            out.append({k: v for k, v in page.items() if k != "content_html"})
+    return out
+
+
+async def list_wordpress_pages_for_slugs(
+    session: AsyncSession,
+    client_id: UUID,
+    slugs: set[str],
+    *,
+    per_page: int = 100,
+) -> list[dict[str, str | int]]:
+    """Published WP pages matching RankPilot suburb-history slugs only."""
+    wanted = {s.strip().lower() for s in slugs if (s or "").strip()}
+    if not wanted:
+        return []
+    pages = await _fetch_published_wp_pages(session, client_id, per_page=per_page)
+    return [
+        {k: v for k, v in page.items() if k != "content_html"}
+        for page in pages
+        if str(page.get("slug") or "").strip().lower() in wanted
+    ]

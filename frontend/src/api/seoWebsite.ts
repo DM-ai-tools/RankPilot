@@ -331,3 +331,37 @@ export const deleteSuburbPageHistory = (
   apiDelete(
     `/api/v1/integrations/wordpress/suburb-pages/history/${historyId}?delete_wordpress=${deleteWordpress}`,
   );
+
+export type SuburbPageRankingItem = {
+  history_id: string;
+  title: string;
+  keyword: string;
+  search_keywords?: string[];
+  suburb: string;
+  slug: string;
+  page_url: string | null;
+  published_at: string | null;
+  last_week_organic: number | null;
+  last_week_maps: number | null;
+  last_week_position: number | null;
+  last_week_label: string;
+  this_week_organic: number | null;
+  this_week_maps: number | null;
+  this_week_position: number | null;
+  this_week_label: string;
+  position_change: number | null;
+  is_ranking: boolean;
+  status: "ranking" | "not_ranking" | string;
+  rank_note?: string | null;
+};
+
+export type SuburbPageRankingsResponse = {
+  items: SuburbPageRankingItem[];
+};
+
+export const fetchSuburbPageRankings = (): Promise<SuburbPageRankingsResponse> =>
+  apiGet<SuburbPageRankingsResponse>("/api/v1/integrations/wordpress/suburb-pages/rankings");
+
+export const syncSuburbPageRankings = (): Promise<
+  SuburbPageRankingsResponse & { added_keywords: number; checked: number }
+> => apiPostJson("/api/v1/integrations/wordpress/suburb-pages/rankings/sync", {});

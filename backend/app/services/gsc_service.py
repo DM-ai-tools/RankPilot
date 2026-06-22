@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from datetime import date, timedelta
 from typing import Any
 from urllib.parse import quote, unquote, urlparse
@@ -625,3 +626,183 @@ async def fetch_gsc_keywords(
         "end_date": end,
         **_gsc_filter_meta(pages),
     }
+
+
+def _normalize_kw_text(raw: str) -> str:
+    return re.sub(r"\s+", " ", (raw or "").strip().lower())
+
+
+def _keyword_matches(candidate: str, query: str) -> bool:
+    """Exact or same-word-set match for GSC query rows."""
+    cand = _normalize_kw_text(candidate)
+    q = _normalize_kw_text(query)
+    if not cand or not q:
+        return False
+    if cand == q:
+        return True
+    cand_words = set(cand.split())
+    query_words = set(q.split())
+    return cand_words == query_words or cand_words <= query_words or query_words <= cand_words
+
+
+def _build_gsc_page_contains_filter(path: str) -> list[dict[str, Any]]:
+    expr = path if path.startswith("/") else f"/{path}"
+    return [{"filters": [{"dimension": "page", "operator": "contains", "expression": expr}]}]
+
+
+async def _gsc_run_query_page_contains(
+    token: str,
+    site_url: str,
+    *,
+    path: str,
+    start_date: str,
+    end_date: str,
+    dimensions: list[str] | None = None,
+    limit: int = 2500,
+) -> list[dict[str, Any]]:
+    """Query GSC rows where page URL contains the path (trailing-slash tolerant)."""
+    encoded_site = quote(site_url, safe="")
+    url = _GSC_QUERY_URL.format(site_url=encoded_site)
+    body: dict[str, Any] = {
+        "startDate": start_date,
+        "endDate": end_date,
+        "rowLimit": min(limit, 25_000),
+        "startRow": 0,
+        "dimensionFilterGroups": _build_gsc_page_contains_filter(path),
+    }
+    if dimensions:
+        body["dimensions"] = dimensions
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as http:
+            r = await http.post(
+                url,
+                json=body,
+                headers={"Authorization": f"Bearer {token}", "Accept": "application/json"},
+            )
+    except httpx.RequestError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"Search Console API request failed: {exc}",
+        ) from exc
+    if not r.is_success:
+        return []
+    out: list[dict[str, Any]] = []
+    dims = dimensions or []
+    for row in (r.json().get("rows") or []):
+        keys = row.get("keys") or []
+        record: dict[str, Any] = {
+            "clicks": int(row.get("clicks") or 0),
+            "impressions": int(row.get("impressions") or 0),
+            "ctr": float(row.get("ctr") or 0),
+            "position": float(row.get("position") or 0),
+        }
+        for i, dim in enumerate(dims):
+            record[dim] = str(keys[i] if i < len(keys) else "")
+        out.append(record)
+    return out
+
+
+async def fetch_gsc_keyword_position(
+    session: AsyncSession,
+    client_id: UUID,
+    *,
+    keyword: str,
+    page_url: str | None = None,
+    start_date: date | None = None,
+    end_date: date | None = None,
+) -> dict[str, Any] | None:
+    """Average Google Search position for a query (optional published page URL filter)."""
+    keyword = (keyword or "").strip()
+    if not keyword:
+        return None
+    try:
+        from app.routes.v1.integrations import _get_google_access_token  # noqa: PLC0415
+
+        token = await _get_google_access_token(session, client_id, "gsc")
+        site_url = await _gsc_site_url(session, client_id)
+    except HTTPException:
+        return None
+    except Exception:
+        logger.warning("GSC keyword position setup failed", exc_info=True)
+        return None
+
+    end = end_date or date.today()
+    start = start_date or (end - timedelta(days=6))
+    dimensions = ["query", "page"] if page_url else ["query"]
+
+    try:
+        rows = await _gsc_run_query(
+            token,
+            site_url,
+            start_date=start.isoformat(),
+            end_date=end.isoformat(),
+            dimensions=dimensions,
+            pages=[page_url] if page_url else None,
+            limit=2500,
+        )
+    except HTTPException:
+        return None
+
+    kw_low = _normalize_kw_text(keyword)
+    best: dict[str, Any] | None = None
+
+    def _consider_row(row: dict[str, Any]) -> None:
+        nonlocal best
+        q = str(row.get("query") or "").strip()
+        if not _keyword_matches(keyword, q):
+            return
+        impressions = int(row.get("impressions") or 0)
+        if impressions <= 0:
+            return
+        pos = float(row.get("position") or 0)
+        if pos <= 0:
+            return
+        rounded = max(1, int(round(pos)))
+        if best is None or rounded < int(best["organic_position"]):
+            best = {
+                "position": round(pos, 1),
+                "organic_position": rounded,
+                "impressions": impressions,
+                "clicks": int(row.get("clicks") or 0),
+                "source": "gsc",
+                "matched_query": q,
+            }
+
+    for row in rows:
+        _consider_row(row)
+
+    # Page filter + exact keyword often misses — scan all queries for this URL.
+    if best is None and page_url:
+        try:
+            page_rows = await _gsc_run_query(
+                token,
+                site_url,
+                start_date=start.isoformat(),
+                end_date=end.isoformat(),
+                dimensions=["query"],
+                pages=[page_url],
+                limit=2500,
+            )
+        except HTTPException:
+            page_rows = []
+        for row in page_rows:
+            _consider_row(row)
+
+        if best is None and page_url:
+            path = urlparse(page_url).path.rstrip("/").lower()
+            if path:
+                try:
+                    contains_rows = await _gsc_run_query_page_contains(
+                        token,
+                        site_url,
+                        path=path,
+                        start_date=start.isoformat(),
+                        end_date=end.isoformat(),
+                        dimensions=["query", "page"],
+                    )
+                except HTTPException:
+                    contains_rows = []
+                for row in contains_rows:
+                    _consider_row(row)
+
+    return best

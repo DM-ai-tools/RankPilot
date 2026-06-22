@@ -25,6 +25,7 @@ import html
 import hashlib
 import hmac
 import json
+import logging
 import re
 import time
 import urllib.parse
@@ -47,6 +48,7 @@ from app.core.config import (
 from app.deps import CurrentClientId, DbSession, OAuthCallbackDbSession
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 
 def _cfg() -> Settings:
@@ -869,6 +871,39 @@ class SuburbPageHistoryResponse(BaseModel):
     items: list[SuburbPageHistoryItem]
 
 
+class SuburbPageRankingItem(BaseModel):
+    history_id: str
+    title: str = ""
+    keyword: str
+    search_keywords: list[str] = []
+    suburb: str = ""
+    slug: str = ""
+    page_url: str | None = None
+    published_at: str | None = None
+    last_week_organic: int | None = None
+    last_week_maps: int | None = None
+    last_week_position: int | None = None
+    last_week_label: str
+    this_week_organic: int | None = None
+    this_week_maps: int | None = None
+    this_week_position: int | None = None
+    this_week_label: str
+    position_change: int | None = None
+    is_ranking: bool
+    status: str
+    rank_note: str | None = None
+
+
+class SuburbPageRankingsResponse(BaseModel):
+    items: list[SuburbPageRankingItem]
+
+
+class SuburbPageRankingsSyncResponse(BaseModel):
+    added_keywords: int
+    checked: int
+    items: list[SuburbPageRankingItem]
+
+
 class SuburbPageHistoryDetail(BaseModel):
     history_id: str
     id: str
@@ -1464,7 +1499,7 @@ async def list_wordpress_pages(
         "orderby": "modified",
         "order": "desc",
         # Keep payload light for shared hosting / slower WP instances.
-        "_fields": "id,link,slug,status,title,modified,excerpt,meta,yoast_head_json,yoast_head",
+        "_fields": "id,link,slug,status,title,modified,excerpt,content,meta,yoast_head_json,yoast_head",
     }
     if (search or "").strip():
         qs["search"] = search.strip()
@@ -1505,30 +1540,11 @@ async def list_wordpress_pages(
     for r in rows:
         if not isinstance(r, dict):
             continue
-        raw_title = _strip_html(str((r.get("title") or {}).get("rendered") if isinstance(r.get("title"), dict) else ""))
-        raw_excerpt = _strip_html(str((r.get("excerpt") or {}).get("rendered") if isinstance(r.get("excerpt"), dict) else ""))
-        title, excerpt = _extract_wp_seo_title_and_description(
-            r,
-            fallback_title=raw_title,
-            fallback_excerpt=raw_excerpt,
-        )
-        wc = 0
         try:
             pid = int(r.get("id"))
         except (TypeError, ValueError):
             continue
-        items.append(
-            WordPressPageSummary(
-                id=pid,
-                title=title or f"Page {pid}",
-                slug=str(r.get("slug") or ""),
-                status=str(r.get("status") or ""),
-                link=str(r.get("link") or ""),
-                modified=str(r.get("modified") or "") or None,
-                excerpt=excerpt or None,
-                word_count=wc,
-            )
-        )
+        items.append(_wordpress_page_summary_from_row(r, page_id=pid))
     total_raw = resp.headers.get("X-WP-Total", "0")
     try:
         total = int(total_raw)
@@ -1656,6 +1672,7 @@ async def save_wordpress_page_content(
     site, wp_user, app_secret = await _wordpress_credentials(session, client_id)
 
     from app.services.wordpress_publish_service import (  # noqa: PLC0415
+        RANKPILOT_PUBLISHED_HTML_MARKER,
         _markdown_to_html,
         embed_rankpilot_figures_in_body,
         extract_rankpilot_figures,
@@ -1690,6 +1707,8 @@ async def save_wordpress_page_content(
                     existing_figures = extract_rankpilot_figures(rendered)
 
             final_html = embed_rankpilot_figures_in_body(body_html, existing_figures)
+            if RANKPILOT_PUBLISHED_HTML_MARKER not in final_html:
+                final_html = f"{final_html}\n{RANKPILOT_PUBLISHED_HTML_MARKER}"
             payload: dict[str, object] = {"content": final_html, "status": wp_status}
             resp = await http.post(
                 url,
@@ -1735,6 +1754,23 @@ async def save_wordpress_page_content(
     )
     content_txt = _strip_html(str((r.get("content") or {}).get("rendered") if isinstance(r.get("content"), dict) else ""))
     wc = len(content_txt.split()) if content_txt else 0
+
+    if wp_status == "publish":
+        from app.services.suburb_page_history_service import register_wordpress_page_publish  # noqa: PLC0415
+
+        try:
+            await register_wordpress_page_publish(
+                session,
+                client_id,
+                wordpress_page_id=int(r.get("id") or page_id),
+                slug=str(r.get("slug") or ""),
+                title=title or raw_title,
+                wordpress_link=str(r.get("link") or ""),
+                content=md,
+                excerpt=excerpt or raw_excerpt,
+            )
+        except Exception:
+            logger.warning("Failed to register WP page publish in suburb history", exc_info=True)
 
     return WordPressPageSummary(
         id=int(r.get("id") or page_id),
@@ -2511,6 +2547,14 @@ async def publish_suburb_page(
         wordpress_link=str(result.get("link") or ""),
     )
 
+    from app.services.keyword_tracker_service import track_published_suburb_page_keyword  # noqa: PLC0415
+
+    target_kw = (body.target_keyword or "").strip() or slug_hint
+    try:
+        await track_published_suburb_page_keyword(session, client_id, target_kw)
+    except Exception:
+        logger.warning("Suburb page rank track failed for %r", target_kw, exc_info=True)
+
     return PublishSuburbPageResponse(
         history_id=history_id,
         link=str(result.get("link") or ""),
@@ -2546,6 +2590,40 @@ async def list_suburb_page_history(
             page_url = f"{wp_site.rstrip('/')}/{slug}/"
         items.append(SuburbPageHistoryItem(**r, page_url=page_url or None))
     return SuburbPageHistoryResponse(items=items)
+
+
+@router.get(
+    "/integrations/wordpress/suburb-pages/rankings",
+    response_model=SuburbPageRankingsResponse,
+)
+async def list_suburb_page_rankings(
+    client_id: CurrentClientId,
+    session: DbSession,
+) -> SuburbPageRankingsResponse:
+    """Google rank this week vs last week for published suburb page keywords."""
+    from app.services.suburb_page_history_service import get_published_suburb_page_rankings  # noqa: PLC0415
+
+    items = await get_published_suburb_page_rankings(session, client_id)
+    return SuburbPageRankingsResponse(items=[SuburbPageRankingItem(**i) for i in items])
+
+
+@router.post(
+    "/integrations/wordpress/suburb-pages/rankings/sync",
+    response_model=SuburbPageRankingsSyncResponse,
+)
+async def sync_suburb_page_rankings(
+    client_id: CurrentClientId,
+    session: DbSession,
+) -> SuburbPageRankingsSyncResponse:
+    """Refresh Ahrefs/DataForSEO rank checks for published suburb page keywords."""
+    from app.services.suburb_page_history_service import sync_published_suburb_page_rankings  # noqa: PLC0415
+
+    result = await sync_published_suburb_page_rankings(session, client_id)
+    return SuburbPageRankingsSyncResponse(
+        added_keywords=int(result.get("added_keywords") or 0),
+        checked=int(result.get("checked") or 0),
+        items=[SuburbPageRankingItem(**i) for i in result.get("items") or []],
+    )
 
 
 @router.get(

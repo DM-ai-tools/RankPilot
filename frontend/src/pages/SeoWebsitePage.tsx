@@ -31,6 +31,7 @@ import {
 } from "../api/seoWebsite";
 import { gbpPhotoFileUrl } from "../api/gbp";
 import { FaqAccordionPreview } from "../components/seo/FaqAccordionPreview";
+import { SuburbPageRankingsCard } from "../components/seo/SuburbPageRankingsCard";
 import { WordPressLivePageEditor } from "../components/seo/WordPressLivePageEditor";
 import { TopBar } from "../components/layout/TopBar";
 import { AhrefsKeywordExplorer } from "../components/keywords/AhrefsKeywordExplorer";
@@ -332,6 +333,7 @@ export function SeoWebsitePage() {
       if (data.slug) setSbSlug(data.slug);
       document.getElementById("edit-live-wordpress-page")?.scrollIntoView({ behavior: "smooth", block: "start" });
       await qc.invalidateQueries({ queryKey: ["suburb-page-history"] });
+      await qc.invalidateQueries({ queryKey: ["suburb-page-rankings"] });
       await qc.invalidateQueries({ queryKey: ["seo-website", "wordpress-pages"] });
     },
   });
@@ -350,6 +352,7 @@ export function SeoWebsitePage() {
         setLiveEditPageId(null);
       }
       await qc.invalidateQueries({ queryKey: ["suburb-page-history"] });
+      await qc.invalidateQueries({ queryKey: ["suburb-page-rankings"] });
       await qc.invalidateQueries({ queryKey: ["seo-website", "wordpress-pages"] });
     },
   });
@@ -1348,6 +1351,10 @@ export function SeoWebsitePage() {
                   ) : null}
                 </div>
               </Card>
+            </div>
+
+            <div className="mt-4">
+              <SuburbPageRankingsCard enabled={wpConnected} token={token} />
             </div>
 
             <div className="mt-4 grid gap-4 lg:grid-cols-2">

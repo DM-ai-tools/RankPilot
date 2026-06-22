@@ -13,9 +13,11 @@ Flow:
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import re
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime, timedelta
+from typing import Any
 from urllib.parse import urlparse
 from uuid import UUID
 
@@ -99,9 +101,14 @@ def _client_positions_from_serp(
     *,
     business_url: str,
     business_name: str,
+    page_url: str | None = None,
 ) -> tuple[int | None, int | None]:
     """Return (organic_position, local_pack_position) for the client's business."""
     target = _normalize_domain(business_url)
+    page_path = ""
+    if page_url:
+        with contextlib.suppress(Exception):
+            page_path = urlparse(page_url).path.rstrip("/").lower()
     organic: int | None = None
     local_pack: int | None = None
 
@@ -116,10 +123,20 @@ def _client_positions_from_serp(
         kinds = row.get("types") or []
         url = str(row.get("url") or "")
         title = str(row.get("title") or "")
+        is_organic = not kinds or "organic" in kinds
+        is_local = "local_pack" in kinds
 
-        if "organic" in kinds and _domain_matches(url, target):
-            organic = rank if organic is None else min(organic, rank)
-        if "local_pack" in kinds and (
+        if is_organic and (
+            _domain_matches(url, target)
+            or _name_matches(title, business_name)
+        ):
+            if page_path:
+                url_path = urlparse(url).path.rstrip("/").lower() if url else ""
+                if page_path in url_path or url_path.endswith(page_path):
+                    organic = rank if organic is None else min(organic, rank)
+            else:
+                organic = rank if organic is None else min(organic, rank)
+        if is_local and (
             _name_matches(title, business_name) or _domain_matches(url, target)
         ):
             local_pack = rank if local_pack is None else min(local_pack, rank)
@@ -255,6 +272,53 @@ async def _latest_maps_rank(
     return min(positions) if positions else None
 
 
+async def _fetch_live_google_organic_rank(
+    session: AsyncSession,
+    client_id: UUID,
+    keyword: str,
+    meta: dict,
+    *,
+    page_url: str | None = None,
+) -> int | None:
+    """Live Google organic SERP via DataForSEO (suburb-localized when grid exists)."""
+    settings = get_settings()
+    if not str(settings.dataforseo_login or "").strip() or not str(settings.dataforseo_password or "").strip():
+        return None
+
+    business_url = str(meta.get("business_url") or "").strip()
+    business_name = str(meta.get("business_name") or "").strip()
+    if not business_url and not business_name:
+        return None
+
+    suburb = await _primary_suburb_point(session, client_id, meta)
+    lat = float(suburb["lat"]) if suburb and suburb.get("lat") is not None else None
+    lng = float(suburb["lng"]) if suburb and suburb.get("lng") is not None else None
+
+    from app.services.dataforseo_service import DataForSEOClient
+
+    client = DataForSEOClient(settings)
+    try:
+        return await asyncio.wait_for(
+            client.get_google_organic_rank(
+                keyword.strip(),
+                business_url,
+                page_url=page_url,
+                business_name=business_name or None,
+                lat=lat,
+                lng=lng,
+            ),
+            timeout=35.0,
+        )
+    except TimeoutError:
+        logger.warning("Live Google organic rank timed out for %r", keyword)
+        return None
+    except Exception as exc:
+        logger.warning("Live Google organic rank failed for %r: %s", keyword, exc)
+        return None
+    finally:
+        await client.aclose()
+
+
 async def _fetch_ahrefs_ranks(
     session: AsyncSession,
     client_id: UUID,
@@ -263,6 +327,7 @@ async def _fetch_ahrefs_ranks(
     meta: dict,
     *,
     force: bool = False,
+    page_url: str | None = None,
 ) -> tuple[int | None, int | None, int | None]:
     """(organic_position, search_volume, local_pack_position) for this client's business."""
     cache_key = build_cache_key("tracker-serp-v3", country, str(client_id), keyword)
@@ -299,6 +364,7 @@ async def _fetch_ahrefs_ranks(
             positions,
             business_url=business_url,
             business_name=business_name,
+            page_url=page_url,
         )
 
         vol = overview.get("volume")
@@ -461,6 +527,42 @@ async def sync_tracked_keywords(
         )
         added += result.rowcount or 0
 
+    suburb_rows = (
+        await session.execute(
+            text(
+                """
+                SELECT DISTINCT LOWER(TRIM(keyword)) AS kw
+                FROM rp_suburb_page_history
+                WHERE client_id = :cid
+                  AND status = 'published'
+                  AND COALESCE(TRIM(keyword), '') <> ''
+                """
+            ),
+            {"cid": str(client_id)},
+        )
+    ).mappings().all()
+
+    for r in suburb_rows:
+        kw = str(r["kw"] or "").strip()
+        if not kw or not _is_valid_keyword(kw):
+            continue
+        result = await session.execute(
+            text(
+                """
+                INSERT INTO rp_keyword_tracker (client_id, keyword, source)
+                VALUES (:cid, :kw, 'suburb_page_published')
+                ON CONFLICT (client_id, keyword) DO UPDATE
+                  SET source = CASE
+                    WHEN EXCLUDED.source = 'suburb_page_published' THEN 'suburb_page_published'
+                    WHEN rp_keyword_tracker.source = 'gbp_post_published' THEN 'gbp_post_published'
+                    ELSE rp_keyword_tracker.source
+                  END
+                """
+            ),
+            {"cid": str(client_id), "kw": kw},
+        )
+        added += result.rowcount or 0
+
     await session.commit()
     return added
 
@@ -485,6 +587,138 @@ async def track_published_post_keyword(
     )
     await session.commit()
     await run_rank_checks(session, client_id, keywords=[kw], force=True)
+
+
+async def track_published_suburb_page_keyword(
+    session: AsyncSession, client_id: UUID, keyword: str
+) -> None:
+    """Track a suburb landing page keyword after WordPress publish."""
+    kw = keyword.strip().lower()
+    if not kw or not _is_valid_keyword(kw):
+        return
+    await session.execute(
+        text(
+            """
+            INSERT INTO rp_keyword_tracker (client_id, keyword, source)
+            VALUES (:cid, :kw, 'suburb_page_published')
+            ON CONFLICT (client_id, keyword) DO UPDATE
+              SET source = CASE
+                WHEN EXCLUDED.source = 'suburb_page_published' THEN 'suburb_page_published'
+                WHEN rp_keyword_tracker.source = 'gbp_post_published' THEN 'gbp_post_published'
+                ELSE rp_keyword_tracker.source
+              END
+            """
+        ),
+        {"cid": str(client_id), "kw": kw},
+    )
+    await session.commit()
+
+
+def _slug_to_search_keyword(slug: str) -> str:
+    return re.sub(r"\s+", " ", (slug or "").replace("-", " ").strip())
+
+
+def _search_keyword_candidates(keyword: str, slug: str = "") -> list[str]:
+    out: list[str] = []
+    for raw in [keyword, _slug_to_search_keyword(slug)]:
+        k = raw.strip().lower()
+        if k and k not in out:
+            out.append(k)
+    return out
+
+
+async def check_suburb_page_rank(
+    session: AsyncSession,
+    client_id: UUID,
+    *,
+    keyword: str,
+    slug: str = "",
+    page_url: str | None = None,
+    force: bool = False,
+) -> dict[str, Any]:
+    """Rank check for a published suburb page — Ahrefs SERP + GSC for page URL."""
+    from app.services.gsc_service import fetch_gsc_keyword_position
+
+    meta = await _get_client_meta(session, client_id)
+    metro = str(meta.get("metro_label") or "")
+    country = _country_for_metro(metro) or "au"
+    candidates = _search_keyword_candidates(keyword, slug)
+    primary_kw = candidates[0] if candidates else keyword.strip().lower()
+
+    best_organic: int | None = None
+    best_maps: int | None = None
+    volume: int | None = None
+    rank_source = "none"
+
+    today = date.today()
+    for kw in candidates:
+        gsc = await fetch_gsc_keyword_position(
+            session,
+            client_id,
+            keyword=kw,
+            page_url=page_url,
+            start_date=today - timedelta(days=6),
+            end_date=today,
+        )
+        if gsc and gsc.get("organic_position"):
+            gsc_pos = int(gsc["organic_position"])
+            best_organic = gsc_pos if best_organic is None else min(best_organic, gsc_pos)
+            rank_source = "gsc"
+
+    for kw in candidates:
+        organic, vol, maps = await _fetch_ahrefs_ranks(
+            session,
+            client_id,
+            kw,
+            country,
+            meta,
+            force=force,
+            page_url=page_url,
+        )
+        if vol is not None and volume is None:
+            volume = vol
+        if organic is not None:
+            best_organic = organic if best_organic is None else min(best_organic, organic)
+            rank_source = "ahrefs" if rank_source == "none" else "gsc+ahrefs"
+        if maps is not None:
+            best_maps = maps if best_maps is None else min(best_maps, maps)
+
+    maps_pos = await _latest_maps_rank(session, client_id, primary_kw)
+    if maps_pos is not None:
+        best_maps = maps_pos if best_maps is None else min(best_maps, maps_pos)
+
+    if best_organic is None:
+        for kw in candidates:
+            live_org = await _fetch_live_google_organic_rank(
+                session,
+                client_id,
+                kw,
+                meta,
+                page_url=page_url,
+            )
+            if live_org is not None:
+                best_organic = live_org if best_organic is None else min(best_organic, live_org)
+                rank_source = "google" if rank_source == "none" else f"{rank_source}+google"
+
+    for snap_kw in candidates:
+        await _upsert_rank_snapshot(
+            session,
+            client_id,
+            snap_kw,
+            organic_position=best_organic,
+            maps_position=best_maps,
+            search_volume=volume,
+        )
+
+    return {
+        "keyword": primary_kw,
+        "search_keywords": candidates,
+        "organic_position": best_organic,
+        "maps_position": best_maps,
+        "search_volume": volume,
+        "rank_source": rank_source,
+        "rank_note": _rank_note(best_organic, best_maps, volume),
+    }
 
 
 async def add_keyword(session: AsyncSession, client_id: UUID, keyword: str) -> bool:
@@ -557,7 +791,7 @@ async def run_rank_checks(
         published_kws = {
             str(r["keyword"]).lower()
             for r in rows
-            if str(r.get("source") or "") == "gbp_post_published"
+            if str(r.get("source") or "") in ("gbp_post_published", "suburb_page_published")
         }
     else:
         pub_rows = (
@@ -565,7 +799,8 @@ async def run_rank_checks(
                 text(
                     """
                     SELECT keyword FROM rp_keyword_tracker
-                    WHERE client_id = :cid AND source = 'gbp_post_published'
+                    WHERE client_id = :cid
+                      AND source IN ('gbp_post_published', 'suburb_page_published')
                     """
                 ),
                 {"cid": str(client_id)},
