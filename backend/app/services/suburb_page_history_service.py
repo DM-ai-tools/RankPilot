@@ -682,22 +682,27 @@ async def _build_ranking_item(
     suburb: str,
     page_url: str | None,
     published_at: datetime | None,
+    live_gsc: bool = False,
 ) -> dict:
     from app.services.keyword_tracker_service import _search_keyword_candidates
 
     search_keywords = _search_keyword_candidates(keyword, slug)
     snap_this, snap_last = await _snapshot_weekly_pair(session, client_id, search_keywords)
-    gsc_this, gsc_last = await _gsc_weekly_pair(
-        session, client_id, keyword=keyword, page_url=page_url, slug=slug
-    )
-    this_week = _merge_week(snap_this, gsc_this)
-    if snap_last or gsc_last:
-        last_week = _merge_week(
-            snap_last or {"organic_position": None, "maps_position": None},
-            gsc_last,
+    if live_gsc:
+        gsc_this, gsc_last = await _gsc_weekly_pair(
+            session, client_id, keyword=keyword, page_url=page_url, slug=slug
         )
+        this_week = _merge_week(snap_this, gsc_this)
+        if snap_last or gsc_last:
+            last_week = _merge_week(
+                snap_last or {"organic_position": None, "maps_position": None},
+                gsc_last,
+            )
+        else:
+            last_week = None
     else:
-        last_week = None
+        this_week = snap_this
+        last_week = snap_last
 
     this_pos = _best_google_position(
         this_week.get("organic_position"), this_week.get("maps_position")
@@ -761,7 +766,11 @@ async def _build_ranking_item(
 
 
 async def _published_ranking_sources(
-    session: AsyncSession, client_id: UUID, *, persist_backfill: bool = False
+    session: AsyncSession,
+    client_id: UUID,
+    *,
+    persist_backfill: bool = False,
+    discover_wp_pages: bool = False,
 ) -> list[dict]:
     """RankPilot-published pages: suburb history + matching WordPress suburb landing pages."""
     from app.services.keyword_tracker_service import _slug_to_search_keyword
@@ -836,6 +845,9 @@ async def _published_ranking_sources(
     history_slugs = {str(r["slug"]) for r in history_slug_rows if r.get("slug")}
     slug_prefixes = _suburb_slug_prefixes(history_slugs)
 
+    if not discover_wp_pages:
+        return sources
+
     try:
         wp_pages = await _fetch_published_wp_pages(session, client_id)
     except Exception:
@@ -890,7 +902,7 @@ async def get_published_suburb_page_rankings(session: AsyncSession, client_id: U
 
     await _ensure_tracker_tables()
 
-    sources = await _published_ranking_sources(session, client_id)
+    sources = await _published_ranking_sources(session, client_id, discover_wp_pages=False)
     out: list[dict] = []
     for src in sources:
         out.append(
@@ -914,7 +926,9 @@ async def sync_published_suburb_page_rankings(session: AsyncSession, client_id: 
     from app.services.keyword_tracker_service import check_suburb_page_rank, sync_tracked_keywords
 
     added = await sync_tracked_keywords(session, client_id)
-    sources = await _published_ranking_sources(session, client_id, persist_backfill=True)
+    sources = await _published_ranking_sources(
+        session, client_id, persist_backfill=True, discover_wp_pages=True
+    )
 
     checked = 0
     for src in sources:

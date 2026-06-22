@@ -49,6 +49,9 @@ function slugifyKeyword(raw: string): string {
     .slice(0, 80);
 }
 
+/** Keep suburb history in cache until the user refreshes or publishes. */
+const SUBURB_DATA_STALE_MS = 30 * 60_000;
+
 const MANUAL_MODULE_GROUPS: { key: string; label: string; types: string[] }[] = [
   { key: "credibility", label: "Credibility (pick 1)", types: ["F", "G", "K"] },
   { key: "service", label: "Service explanation (pick 1)", types: ["C", "D", "I"] },
@@ -153,7 +156,11 @@ export function SeoWebsitePage() {
     queryKey: ["suburb-page-history", token],
     queryFn: fetchSuburbPageHistory,
     enabled: Boolean(token) && wpConnected,
-    staleTime: 30_000,
+    staleTime: SUBURB_DATA_STALE_MS,
+    gcTime: 60 * 60_000,
+    refetchOnMount: false,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
   });
   const suburbModulesQ = useQuery({
     queryKey: ["suburb-page-modules", token],
@@ -1228,7 +1235,7 @@ export function SeoWebsitePage() {
                   subtitle="Click a row to load saved content back into the builder above"
                 />
                 <div className="p-4">
-                  {suburbHistoryQ.isLoading ? (
+                  {suburbHistoryQ.isLoading && !suburbHistoryQ.data ? (
                     <p className="text-sm text-rp-tlight">Loading history…</p>
                   ) : suburbHistoryQ.isError ? (
                     <p className="text-sm text-red-600">{formatApiError(suburbHistoryQ.error)}</p>

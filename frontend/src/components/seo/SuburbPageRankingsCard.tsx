@@ -53,6 +53,8 @@ type Props = {
   token: string | null;
 };
 
+const RANKINGS_STALE_MS = 30 * 60_000;
+
 export function SuburbPageRankingsCard({ enabled, token }: Props) {
   const qc = useQueryClient();
 
@@ -60,7 +62,11 @@ export function SuburbPageRankingsCard({ enabled, token }: Props) {
     queryKey: ["suburb-page-rankings", token],
     queryFn: fetchSuburbPageRankings,
     enabled: enabled && Boolean(token),
-    staleTime: 60_000,
+    staleTime: RANKINGS_STALE_MS,
+    gcTime: 60 * 60_000,
+    refetchOnMount: false,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
   });
 
   const syncMut = useMutation({
@@ -90,7 +96,7 @@ export function SuburbPageRankingsCard({ enabled, token }: Props) {
         }
       />
       <div className="p-4">
-        {rankingsQ.isLoading ? (
+        {rankingsQ.isLoading && !rankingsQ.data ? (
           <p className="text-sm text-rp-tlight">Loading rankings…</p>
         ) : rankingsQ.isError ? (
           <p className="text-sm text-red-600">{formatApiError(rankingsQ.error)}</p>
