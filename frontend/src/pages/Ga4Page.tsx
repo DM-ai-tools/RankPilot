@@ -506,23 +506,32 @@ function ChannelsSection({ rows }: { rows: Ga4Row[]; compared?: boolean }) {
 
 // ── Geo table ─────────────────────────────────────────────────────────────────
 
+function isGeoNotSet(value: string | undefined | null): boolean {
+  const v = String(value ?? "").trim().toLowerCase();
+  return !v || v === "(not set)" || v === "not set" || v === "(not provided)" || v === "unknown";
+}
+
 function GeoTable({ rows }: { rows: Ga4Row[] }) {
-  if (!rows.length) return <p className="text-sm text-rp-tlight">No location data.</p>;
-  const maxSessions = Math.max(...rows.map((r) => Number(r.sessions ?? 0)), 1);
+  const visible = rows.filter((row) => !isGeoNotSet(String(row.city ?? "")));
+  if (!visible.length) return <p className="text-sm text-rp-tlight">No location data.</p>;
+  const maxSessions = Math.max(...visible.map((r) => Number(r.sessions ?? 0)), 1);
   return (
     <div className="max-h-[420px] space-y-2 overflow-auto pr-1">
-      {rows.map((row, i) => {
+      {visible.map((row, i) => {
         const city = String(row.city ?? "Unknown");
-        const region = String(row.region ?? "");
-        const country = String(row.country ?? "");
+        const region = isGeoNotSet(String(row.region ?? "")) ? "" : String(row.region ?? "");
+        const country = isGeoNotSet(String(row.country ?? "")) ? "" : String(row.country ?? "");
+        const locationLabel = [region, country].filter(Boolean).join(", ");
         const sess = Number(row.sessions ?? 0);
         const users = Number(row.activeUsers ?? 0);
         const pct = (sess / maxSessions) * 100;
         return (
-          <div key={`${city}-${i}`} className="flex items-center gap-3">
+          <div key={`${city}-${locationLabel}-${i}`} className="flex items-center gap-3">
             <div className="flex w-40 shrink-0 flex-col">
               <span className="text-xs font-semibold text-navy truncate">{city}</span>
-              <span className="text-[10px] text-rp-tlight truncate">{[region, country].filter(Boolean).join(", ")}</span>
+              {locationLabel ? (
+                <span className="text-[10px] text-rp-tlight truncate">{locationLabel}</span>
+              ) : null}
             </div>
             <div className="relative flex-1 rounded-full bg-gray-100" style={{ height: 8 }}>
               <div

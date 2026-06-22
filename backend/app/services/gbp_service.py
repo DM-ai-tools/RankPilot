@@ -26,6 +26,7 @@ from app.services.content_generation_service import (
     content_llm_available,
 )
 from app.services.gbp_brand_kit_service import get_brand_kit
+from app.services.gbp_keyword_resolver import get_gbp_keyword_candidates, resolve_gbp_post_target_keyword
 from app.services.gbp_photos_service import list_gbp_photos
 
 logger = logging.getLogger(__name__)
@@ -2111,9 +2112,9 @@ async def generate_weekly_post(
     )
 
 
-async def _list_google_local_post_names(token: str, v4_parent: str) -> set[str]:
-    """Names of local posts currently live on Google (accounts/.../locations/.../localPosts/...)."""
-    names: set[str] = set()
+async def _list_google_local_posts(token: str, v4_parent: str) -> list[dict[str, Any]]:
+    """Local posts currently live on Google (accounts/.../locations/.../localPosts/...)."""
+    posts: list[dict[str, Any]] = []
     url = f"{GBP_V4_BASE}/{v4_parent}/localPosts"
     page_token: str | None = None
     async with httpx.AsyncClient(timeout=30.0) as http:
@@ -2129,30 +2130,199 @@ async def _list_google_local_post_names(token: str, v4_parent: str) -> set[str]:
                     msg = str(resp.json().get("error", {}).get("message") or "")
                 logger.warning("GBP list localPosts failed: %s", msg or resp.text[:200])
                 break
-            data = resp.json() if isinstance(resp.json(), dict) else {}
+            data = resp.json() if resp.content else {}
+            if not isinstance(data, dict):
+                break
             for item in data.get("localPosts") or []:
                 if isinstance(item, dict):
                     name = str(item.get("name") or "").strip()
                     if name:
-                        names.add(name)
+                        posts.append(item)
             page_token = str(data.get("nextPageToken") or "").strip() or None
             if not page_token:
                 break
-    return names
+    return posts
+
+
+def _parse_google_rfc3339(raw: str | None) -> datetime | None:
+    if not raw:
+        return None
+    s = str(raw).strip()
+    if not s:
+        return None
+    if s.endswith("Z"):
+        s = s[:-1] + "+00:00"
+    try:
+        return datetime.fromisoformat(s)
+    except ValueError:
+        return None
+
+
+def _payload_from_google_local_post(
+    post: dict[str, Any],
+    *,
+    default_keyword: str = "",
+) -> tuple[str, dict[str, Any], datetime]:
+    """Build queue payload + title from a Google localPost resource."""
+    summary = str(post.get("summary") or "").strip()
+    gname = str(post.get("name") or "").strip()
+    created = (
+        _parse_google_rfc3339(str(post.get("createTime") or ""))
+        or _parse_google_rfc3339(str(post.get("updateTime") or ""))
+        or datetime.now(UTC)
+    )
+    photo_url = ""
+    media = post.get("media")
+    if isinstance(media, list) and media:
+        first = media[0] if isinstance(media[0], dict) else {}
+        photo_url = str(first.get("googleUrl") or first.get("sourceUrl") or "").strip()
+    hook = summary.split("\n", 1)[0].strip()
+    title = hook[:80] if hook else "Synced from Google Business Profile"
+    if len(hook) > 80:
+        title += "…"
+    payload: dict[str, Any] = {
+        "title": title,
+        "body": summary,
+        "word_count": len(summary.split()) if summary else 0,
+        "gbp_local_post_name": gname,
+        "imported_from_google": True,
+        "topic_type": str(post.get("topicType") or "STANDARD"),
+        "synced_at": datetime.now(UTC).isoformat(),
+    }
+    if photo_url:
+        payload["photo_url"] = photo_url
+    if default_keyword:
+        payload["target_keyword"] = default_keyword
+    cta = post.get("callToAction")
+    if isinstance(cta, dict) and cta.get("actionType"):
+        payload["cta_button_type"] = str(cta.get("actionType") or "")
+        payload["cta_button_url"] = str(cta.get("url") or "")
+    return title, payload, created
+
+
+async def _known_gbp_local_post_names(session: AsyncSession, client_id: UUID) -> set[str]:
+    rows = (
+        await session.execute(
+            text(
+                """
+                SELECT payload->>'gbp_local_post_name' AS gname
+                FROM rp_content_queue
+                WHERE client_id = :cid
+                  AND content_type = 'gbp_post'
+                  AND COALESCE(payload->>'gbp_local_post_name', '') <> ''
+                """
+            ),
+            {"cid": str(client_id)},
+        )
+    ).mappings().all()
+    return {str(r["gname"]).strip() for r in rows if str(r.get("gname") or "").strip()}
 
 
 async def sync_gbp_posts_with_google(session: AsyncSession, client_id: UUID) -> dict:
-    """Mark queue posts as removed when deleted directly on Google Business Profile."""
+    """Import live GBP posts into history and reconcile removed/restored status."""
     intg = await _gbp_integration(session, client_id)
     if not intg:
-        return {"checked": 0, "removed": 0, "live_on_google": 0, "skipped": "not_connected"}
+        return {
+            "checked": 0,
+            "removed": 0,
+            "restored": 0,
+            "imported": 0,
+            "live_on_google": 0,
+            "skipped": "not_connected",
+        }
 
     from app.routes.v1.integrations import _get_google_access_token
     from app.services.gbp_photos_service import _resolve_v4_media_parent
 
     token = await _get_google_access_token(session, client_id, "gbp")
     v4_parent = await _resolve_v4_media_parent(token, intg["location_name"])
-    live_names = await _list_google_local_post_names(token, v4_parent)
+    live_posts = await _list_google_local_posts(token, v4_parent)
+    live_names = {str(p.get("name") or "").strip() for p in live_posts if str(p.get("name") or "").strip()}
+    known_names = await _known_gbp_local_post_names(session, client_id)
+    keyword_candidates = await get_gbp_keyword_candidates(session, client_id)
+
+    imported = 0
+    for post in live_posts:
+        gname = str(post.get("name") or "").strip()
+        if not gname or gname in known_names:
+            continue
+        summary = str(post.get("summary") or "").strip()
+        matched_kw = resolve_gbp_post_target_keyword(
+            {"body": summary},
+            keyword_candidates,
+            post_index=imported,
+        )
+        _title, payload, created = _payload_from_google_local_post(
+            post,
+            default_keyword=matched_kw,
+        )
+        post_id = str(uuid7())
+        await session.execute(
+            text(
+                """
+                INSERT INTO rp_content_queue
+                    (id, client_id, content_type, status, approval_mode,
+                     payload, generated_at, published_at, created_at, updated_at)
+                VALUES
+                    (:id, :cid, 'gbp_post', 'published', 'approval_required',
+                     (CAST(:payload AS text))::jsonb, :created, :created, :created, :now)
+                """
+            ),
+            {
+                "id": post_id,
+                "cid": str(client_id),
+                "payload": json.dumps(payload),
+                "created": created,
+                "now": datetime.now(UTC),
+            },
+        )
+        known_names.add(gname)
+        imported += 1
+        logger.info("GBP sync imported post %s for client %s", gname, client_id)
+
+    if keyword_candidates:
+        reinfer_rows = (
+            await session.execute(
+                text(
+                    """
+                    SELECT id, payload
+                    FROM rp_content_queue
+                    WHERE client_id = :cid
+                      AND content_type = 'gbp_post'
+                      AND COALESCE(payload->>'imported_from_google', 'false') = 'true'
+                    ORDER BY created_at ASC
+                    """
+                ),
+                {"cid": str(client_id)},
+            )
+        ).mappings().all()
+        for i, row in enumerate(reinfer_rows):
+            payload = row["payload"] if isinstance(row["payload"], dict) else {}
+            if isinstance(row["payload"], str):
+                with contextlib.suppress(json.JSONDecodeError):
+                    payload = json.loads(row["payload"])
+            if not isinstance(payload, dict):
+                payload = {}
+            kw = resolve_gbp_post_target_keyword(payload, keyword_candidates, post_index=i)
+            if not kw:
+                continue
+            payload["target_keyword"] = kw
+            await session.execute(
+                text(
+                    """
+                    UPDATE rp_content_queue
+                    SET payload = (CAST(:payload AS text))::jsonb,
+                        updated_at = :now
+                    WHERE id = :id AND client_id = :cid
+                    """
+                ),
+                {
+                    "id": str(row["id"]),
+                    "cid": str(client_id),
+                    "payload": json.dumps(payload),
+                    "now": datetime.now(UTC),
+                },
+            )
 
     rows = (
         await session.execute(
@@ -2229,6 +2399,7 @@ async def sync_gbp_posts_with_google(session: AsyncSession, client_id: UUID) -> 
         "checked": checked,
         "removed": removed,
         "restored": restored,
+        "imported": imported,
         "live_on_google": len(live_names),
     }
 

@@ -36,6 +36,7 @@ import {
   saveGbpDescriptionDraft,
   scheduleAllGbpPosts,
   syncGbpPosts,
+  type SyncGbpPostsResult,
   updateGbpDescription,
   updateGbpPost,
   updateGbpPostCta,
@@ -288,7 +289,27 @@ function PublishedPostCtaUpdater({ postId }: { postId: string }) {
 }
 
 
-// ── Posts Tab ─────────────────────────────────────────────────────────────────
+function formatSyncPostsNote(data: SyncGbpPostsResult): string {
+  if (data.skipped === "not_connected") {
+    return "Connect Google Business Profile in Settings → Integrations first.";
+  }
+  if (data.imported > 0) {
+    const extra =
+      data.removed > 0
+        ? ` ${data.removed} marked removed on Google.`
+        : data.restored > 0
+          ? ` ${data.restored} restored.`
+          : "";
+    return `Imported ${data.imported} post${data.imported === 1 ? "" : "s"} from Google.${extra}`;
+  }
+  if (data.live_on_google === 0) {
+    return "No posts found on your Google Business Profile.";
+  }
+  if (data.removed > 0 || data.restored > 0) {
+    return `Sync complete — ${data.removed} removed, ${data.restored} restored on Google.`;
+  }
+  return `Up to date — ${data.live_on_google} post${data.live_on_google === 1 ? "" : "s"} live on Google.`;
+}
 
 function PostsTab({
   d,
@@ -306,6 +327,8 @@ function PostsTab({
   busy,
   saveDraftPending,
   syncPostsPending,
+  syncPostsNote,
+  syncPostsError,
 }: {
   d: GbpOverview;
   token: string | null;
@@ -322,6 +345,8 @@ function PostsTab({
   busy: boolean;
   saveDraftPending: boolean;
   syncPostsPending: boolean;
+  syncPostsNote: string | null;
+  syncPostsError: boolean;
 }) {
   const qc = useQueryClient();
   const currentDraft = d.weekly_post ?? d.posts?.find((p) => p.status === "pending");
@@ -1268,6 +1293,15 @@ function PostsTab({
             </div>
           }
         />
+        {syncPostsNote ? (
+          <p
+            className={`border-b border-rp-border px-4 py-2 text-sm ${
+              syncPostsError ? "text-red-600" : "text-[#137333]"
+            }`}
+          >
+            {syncPostsNote}
+          </p>
+        ) : null}
         {allPosts.length === 0 ? (
           <p className="px-4 py-6 text-center text-sm text-rp-tlight">
             No posts yet — generate your first post above
@@ -2370,6 +2404,7 @@ export function GbpPage() {
 
   const [generatePostNote, setGeneratePostNote] = useState<string | null>(null);
   const [publishPostNote, setPublishPostNote] = useState<string | null>(null);
+  const [syncPostsNote, setSyncPostsNote] = useState<string | null>(null);
 
   const generatePost = useMutation({
     mutationFn: ({
@@ -2431,7 +2466,13 @@ export function GbpPage() {
 
   const syncPosts = useMutation({
     mutationFn: syncGbpPosts,
-    onSuccess: () => void qc.invalidateQueries({ queryKey: ["gbp"] }),
+    onSuccess: (data) => {
+      setSyncPostsNote(formatSyncPostsNote(data));
+      void qc.invalidateQueries({ queryKey: ["gbp"] });
+    },
+    onError: (err) => {
+      setSyncPostsNote(formatApiError(err));
+    },
   });
 
   const markPostRemoved = useMutation({
@@ -2608,6 +2649,8 @@ export function GbpPage() {
                 busy={busy}
                 saveDraftPending={savePostDraft.isPending}
                 syncPostsPending={syncPosts.isPending}
+                syncPostsNote={syncPostsNote}
+                syncPostsError={syncPosts.isError}
                 onGenerate={(count, prompts, targetKeywords) =>
                   void generatePost.mutate({ count, prompts, targetKeywords })
                 }
@@ -2616,7 +2659,11 @@ export function GbpPage() {
                   void approvePost.mutate({ id, body, scheduledFor })
                 }
                 onPublish={(id, body, cta) => void publishPost.mutate({ id, body, cta })}
-                onSyncPosts={() => void syncPosts.mutate()}
+                onSyncPosts={() => {
+                  setSyncPostsNote(null);
+                  syncPosts.reset();
+                  void syncPosts.mutate();
+                }}
                 onDeletePost={(id) => void deletePost.mutate(id)}
                 onScheduleAll={(mode, start, end) =>
                   void scheduleAll.mutate({ mode, start, end })

@@ -332,6 +332,23 @@ def _filter_meta(pages: list[str] | None) -> dict[str, Any]:
     return {"filtered_pages": pages, "page_filter_active": True}
 
 
+def _is_geo_dimension_not_set(value: str | None) -> bool:
+    v = str(value or "").strip().lower()
+    return not v or v in {"(not set)", "not set", "(not provided)", "unknown"}
+
+
+def _filter_geo_rows(rows: list[dict[str, Any]], *, limit: int) -> list[dict[str, Any]]:
+    """Drop GA4 placeholder locations — city must be a real value."""
+    out: list[dict[str, Any]] = []
+    for row in rows:
+        if _is_geo_dimension_not_set(str(row.get("city") or "")):
+            continue
+        out.append(row)
+        if len(out) >= limit:
+            break
+    return out
+
+
 # ── High-level fetch functions ────────────────────────────────────────────────
 
 async def fetch_overview(
@@ -550,12 +567,13 @@ async def fetch_geo(
         date_ranges=date_ranges,
         dimension_filter=build_ga4_page_location_filter(pages or []),
         order_bys=[{"metric": {"metricName": "sessions"}, "desc": True}],
-        limit=limit,
+        limit=min(max(limit * 4, 60), 200),
     )
+    rows = _filter_geo_rows(_parse_rows(data), limit=limit)
     return {
-        "rows": _parse_rows(data),
+        "rows": rows,
         "totals": _row_totals(data),
-        "row_count": data.get("rowCount") or 0,
+        "row_count": len(rows),
         **_filter_meta(pages),
     }
 

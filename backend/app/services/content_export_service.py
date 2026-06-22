@@ -15,6 +15,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import Settings, get_settings
+from app.services.gbp_keyword_resolver import get_gbp_keyword_candidates, resolve_gbp_post_target_keyword
 
 
 async def _serp_competitors_by_keyword(
@@ -42,6 +43,8 @@ async def _serp_competitors_by_keyword(
                     + (" · Maps pack" if c.in_local_pack else "")
                     for c in res.competitors[:5]
                 )
+            elif res.message:
+                out[kw] = res.message
         except Exception:
             continue
     return out
@@ -226,11 +229,19 @@ async def build_gbp_posts_xlsx(
         )
     ).mappings().all()
 
-    # Competitors ranking on Google for each post's keyword (Ahrefs, 24h cached).
+    client_keywords = await get_gbp_keyword_candidates(session, client_id)
+    resolved_keywords: list[str] = []
     distinct_keywords: list[str] = []
     for r in rows:
         payload = r["payload"] if isinstance(r["payload"], dict) else {}
-        kw = str((payload or {}).get("target_keyword") or "").strip()
+        if not isinstance(payload, dict):
+            payload = {}
+        kw = resolve_gbp_post_target_keyword(
+            payload,
+            client_keywords,
+            post_index=len(resolved_keywords),
+        )
+        resolved_keywords.append(kw)
         if kw and kw.lower() not in {k.lower() for k in distinct_keywords}:
             distinct_keywords.append(kw)
     competitors_by_kw = await _serp_competitors_by_keyword(session, client_id, distinct_keywords)
@@ -266,13 +277,13 @@ async def build_gbp_posts_xlsx(
         photo_id = str(payload.get("photo_id") or "").strip() or None
         gen = r["generated_at"].strftime("%Y-%m-%d %H:%M") if r["generated_at"] else ""
         pub = r["published_at"].strftime("%Y-%m-%d %H:%M") if r["published_at"] else ""
-        target_kw = str(payload.get("target_keyword") or "").strip()
+        target_kw = resolved_keywords[idx - 1]
         ws.append(
             [
                 idx,
                 "",  # image is added as a floating picture below
                 payload.get("title"),
-                payload.get("target_keyword"),
+                target_kw,
                 competitors_by_kw.get(target_kw, ""),
                 str(r["status"]).replace("_", " "),
                 payload.get("scheduled_for"),

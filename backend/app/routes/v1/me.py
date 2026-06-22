@@ -9,7 +9,7 @@ from app.schemas.client import ClientMeResponse
 from app.schemas.me_patch import MePatchRequest
 from app.schemas.onboarding import OnboardingRequest, OnboardingResponse
 from app.services.geocode_service import resolve_business_map_point
-from app.services.onboarding_service import OnboardingService
+from app.services.onboarding_service import OnboardingService, _clear_draft_content_queue
 
 router = APIRouter()
 
@@ -120,10 +120,7 @@ async def patch_me(
     site_changed = new_site != old_site
     kw_changed = body.primary_keyword is not None and normalized_kw.lower() != old_kw
     if site_changed or kw_changed:
-        await session.execute(
-            text("DELETE FROM rp_content_queue WHERE client_id = :cid"),
-            {"cid": str(client_id)},
-        )
+        await _clear_draft_content_queue(session, client_id)
 
     if body.primary_keyword is not None:
         await session.execute(

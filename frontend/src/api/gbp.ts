@@ -200,7 +200,16 @@ export const updateGbpPostCta = (
 export const deleteGbpPost = (id: string): Promise<Record<string, unknown>> =>
   apiDelete(`/api/v1/gbp/posts/${id}`);
 
-export const syncGbpPosts = (): Promise<Record<string, unknown>> =>
+export type SyncGbpPostsResult = {
+  checked: number;
+  removed: number;
+  restored: number;
+  imported: number;
+  live_on_google: number;
+  skipped?: string;
+};
+
+export const syncGbpPosts = (): Promise<SyncGbpPostsResult> =>
   apiPostJson("/api/v1/gbp/posts/sync", {});
 
 export type ScheduleAllResult = {

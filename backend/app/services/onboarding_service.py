@@ -13,6 +13,23 @@ from app.lib.primary_keywords import normalize_primary_keywords
 
 logger = logging.getLogger(__name__)
 
+_DRAFT_QUEUE_STATUSES = ("pending", "approved")
+
+
+async def _clear_draft_content_queue(session: AsyncSession, client_id: UUID) -> int:
+    """Remove unpublished GBP/content drafts when business profile changes."""
+    result = await session.execute(
+        text(
+            """
+            DELETE FROM rp_content_queue
+            WHERE client_id = :cid
+              AND status = ANY(:statuses)
+            """
+        ),
+        {"cid": str(client_id), "statuses": list(_DRAFT_QUEUE_STATUSES)},
+    )
+    return result.rowcount or 0
+
 
 def _norm_site_url(u: str) -> str:
     s = (u or "").strip().rstrip("/").lower()
@@ -131,14 +148,15 @@ class OnboardingService:
             },
         )
 
-        # Only wipe GBP posts / content queue when keyword, site, or metro actually change —
-        # re-saving onboarding after login must not delete existing drafts.
+        # Only clear draft GBP/content queue when keyword, site, or metro change —
+        # published history is kept; re-saving unchanged profile must not wipe anything.
         if profile_changed:
-            await self._session.execute(
-                text("DELETE FROM rp_content_queue WHERE client_id = :cid"),
-                {"cid": str(client_id)},
+            cleared = await _clear_draft_content_queue(self._session, client_id)
+            logger.info(
+                "Onboarding: cleared %d draft queue item(s) for %s (profile changed)",
+                cleared,
+                client_id,
             )
-            logger.info("Onboarding: cleared content queue for %s (profile changed)", client_id)
 
         grid_count = (
             await self._session.execute(
