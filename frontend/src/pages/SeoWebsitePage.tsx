@@ -1248,9 +1248,9 @@ export function SeoWebsitePage() {
                       No suburb pages yet. Generate one above — it will appear here with the date.
                     </p>
                   ) : (
-                    <div className="max-h-[360px] overflow-auto rounded-md border border-rp-border">
-                      <table className="w-full border-collapse text-left text-[11px]">
-                        <thead className="sticky top-0 bg-rp-light text-[10px] font-bold uppercase text-rp-tlight">
+                    <div className="max-h-[420px] overflow-auto rounded-md border border-rp-border">
+                      <table className="w-full min-w-[640px] border-collapse text-left text-[11px]">
+                        <thead className="sticky top-0 z-10 bg-rp-light text-[10px] font-bold uppercase text-rp-tlight shadow-[0_1px_0_0_#E5E7EB]">
                           <tr>
                             <th className="px-3 py-2">Keyword</th>
                             <th className="px-3 py-2">Status</th>

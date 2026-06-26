@@ -15,6 +15,37 @@ class JobsService:
     def __init__(self, session: AsyncSession):
         self._session = session
 
+    async def get_active_maps_scan(self, client_id: UUID) -> JobStatusResponse | None:
+        """Latest queued/running maps_scan for this client (for UI progress polling)."""
+        row = (
+            await self._session.execute(
+                text(
+                    """
+                    SELECT id, job_type, status, payload, result, error_message, created_at, updated_at
+                    FROM rp_jobs
+                    WHERE client_id = :cid
+                      AND job_type = 'maps_scan'
+                      AND status IN ('queued', 'running')
+                    ORDER BY created_at DESC
+                    LIMIT 1
+                    """
+                ),
+                {"cid": str(client_id)},
+            )
+        ).mappings().first()
+        if not row:
+            return None
+        return JobStatusResponse(
+            job_id=row["id"],
+            job_type=str(row["job_type"]),
+            status=str(row["status"]),
+            payload=dict(row["payload"] or {}),
+            result=dict(row["result"]) if row["result"] else None,
+            error_message=row["error_message"],
+            created_at=row["created_at"],
+            updated_at=row["updated_at"],
+        )
+
     async def get_job(self, client_id: UUID, job_id: UUID) -> JobStatusResponse | None:
         row = (
             await self._session.execute(

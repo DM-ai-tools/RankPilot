@@ -152,7 +152,12 @@ class RanksService:
     def __init__(self, session: AsyncSession):
         self._session = session
 
-    async def list_suburbs(self, client_id: UUID) -> SuburbRanksResponse:
+    async def list_suburbs(
+        self,
+        client_id: UUID,
+        *,
+        keyword: str | None = None,
+    ) -> SuburbRanksResponse:
         client = (
             await self._session.execute(
                 text(
@@ -164,21 +169,28 @@ class RanksService:
         primary_kw = str(client["primary_keyword"] if client else "").strip()
         metro = str(client["metro_label"] if client else "")
 
-        latest_scan = (
-            await self._session.execute(
-                text(
-                    """
-                    SELECT keyword
-                    FROM rp_rank_history
-                    WHERE client_id = :cid
-                    ORDER BY checked_at DESC
-                    LIMIT 1
-                    """
-                ),
-                {"cid": str(client_id)},
+        requested = (keyword or "").strip()
+        if requested:
+            keyword = requested
+        else:
+            latest_scan = (
+                await self._session.execute(
+                    text(
+                        """
+                        SELECT keyword
+                        FROM rp_rank_history
+                        WHERE client_id = :cid
+                        ORDER BY checked_at DESC
+                        LIMIT 1
+                        """
+                    ),
+                    {"cid": str(client_id)},
+                )
+            ).mappings().first()
+            keyword = (
+                str(latest_scan["keyword"] if latest_scan else "").strip()
+                or scan_keyword_from_primary(primary_kw)
             )
-        ).mappings().first()
-        keyword = str(latest_scan["keyword"] if latest_scan else "").strip() or scan_keyword_from_primary(primary_kw)
 
         rows = (
             await self._session.execute(

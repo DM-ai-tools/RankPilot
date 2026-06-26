@@ -264,12 +264,13 @@ def _sanitize_post_locations(
         text = _replace_location_repeats(text, suburb_label, "the suburb")
         text = _replace_location_repeats(text, location_label, "the suburb")
 
-    # Cleanup
+    # Cleanup — preserve line breaks; only collapse spaces within each line.
     text = re.sub(r"\bthe area\s+team\b", "our team", text, flags=re.IGNORECASE)
     text = re.sub(r"\bthe suburb\s+team\b", "our team", text, flags=re.IGNORECASE)
     text = re.sub(r"\s+,", ",", text)
     text = re.sub(r",\s*,", ",", text)
-    text = re.sub(r"  +", " ", text)
+    lines = [re.sub(r"  +", " ", ln).strip() for ln in text.replace("\r\n", "\n").split("\n")]
+    text = "\n".join(lines)
     return text.strip()
 
 
@@ -1531,7 +1532,9 @@ async def _generate_one_gbp_post(
         f"- Hard limit: {GBP_POST_CHAR_LIMIT} characters total\n"
         f"- Say 'our team' instead of '{city_name} team' or '{location_label} team'\n"
         f"- Use unique phrasing; avoid clichés\n"
-        f"- Plain text only (emoji + bullets with • or -). No markdown headers.\n"
+        f"- Plain text only (emoji + bullets with •). No markdown headers.\n"
+        f"- Put each bullet on its own line; add a blank line before the bullet list.\n"
+        f"- Do not run bullet points in the same sentence as the paragraph above.\n"
         f"- Customer-facing copy only — never mention hex colour codes (#RRGGBB), brand palette "
         f"values, image prompts, composition notes, or photo-generation directions.\n"
         f"{avoid_block}"
@@ -3035,20 +3038,41 @@ def _trim_gbp_post_to_limit(text: str, limit: int = GBP_POST_CHAR_LIMIT) -> str:
 
 def _strip_design_artifacts_from_post(text: str) -> str:
     """Remove hex codes and image-brief language that must not appear in GBP post copy."""
-    body = (text or "").strip()
+    body = (text or "").strip().replace("\r\n", "\n").replace("\r", "\n")
     if not body:
         return body
     body = re.sub(r"\([^)]*#[0-9A-Fa-f]{6}[^)]*\)", "", body)
     body = re.sub(r"#[0-9A-Fa-f]{6}\b", "", body)
     body = re.sub(r"\b(?:primary|secondary)\s+colou?rs?\b", "brand styling", body, flags=re.I)
-    body = re.sub(r"\s{2,}", " ", body)
+    # Collapse horizontal whitespace only — preserve line breaks and bullet lists.
+    lines = [re.sub(r"[ \t]{2,}", " ", ln).strip() for ln in body.split("\n")]
+    body = "\n".join(lines)
+    body = re.sub(r"\n{3,}", "\n\n", body)
     body = re.sub(r" +\.", ".", body)
     return body.strip()
+
+
+def _format_gbp_bullet_lines(body: str) -> str:
+    """Ensure GBP bullet lists use one item per line (Google plain-text posts)."""
+    text = (body or "").replace("\r\n", "\n").replace("\r", "\n").strip()
+    if not text:
+        return text
+    # Blank line before bullets when glued to the previous sentence.
+    text = re.sub(r"([.!?])([ \t]*)•\s*", r"\1\n\n• ", text)
+    # Split multiple • bullets that share one line.
+    while True:
+        updated = re.sub(r"• ([^•\n]+?) •\s*", r"• \1\n• ", text)
+        if updated == text:
+            break
+        text = updated
+    text = re.sub(r"\n{3,}", "\n\n", text)
+    return text.strip()
 
 
 def normalize_gbp_post_body(text: str, *, auto_complete: bool = False) -> str:
     """Ensure GBP post fits 1,500 chars and ends on a complete sentence."""
     body = _strip_design_artifacts_from_post(text)
+    body = _format_gbp_bullet_lines(body)
     body = _trim_gbp_post_to_limit(body)
     if _gbp_post_ends_complete(body):
         return body

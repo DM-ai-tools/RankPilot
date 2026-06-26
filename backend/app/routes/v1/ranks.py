@@ -1,6 +1,6 @@
 """L4: Rank / suburb grid — L1 data in rp_rank_history + rp_suburb_grid."""
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 
 from app.deps import CurrentClientId, DbSession
 from app.schemas.ranks import SuburbRanksResponse
@@ -16,6 +16,10 @@ def get_ranks_service(session: DbSession) -> RanksService:
 @router.get("/suburbs", response_model=SuburbRanksResponse)
 async def list_suburb_ranks(
     client_id: CurrentClientId,
+    keyword: str | None = Query(
+        default=None,
+        description="Maps heat-map keyword; defaults to business setup / latest scan keyword",
+    ),
     svc: RanksService = Depends(get_ranks_service),
 ) -> SuburbRanksResponse:
-    return await svc.list_suburbs(client_id)
+    return await svc.list_suburbs(client_id, keyword=keyword)

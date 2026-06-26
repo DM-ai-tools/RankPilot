@@ -1,7 +1,7 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect } from "react";
 
-import { fetchJobStatus, type JobStatus } from "../api/jobs";
+import { fetchActiveScanJob, fetchJobStatus, type JobStatus } from "../api/jobs";
 
 export type ScanProgress = {
   suburbs_checked: number;
@@ -58,10 +58,30 @@ export function clearStoredScanJobId() {
 export function useActiveScanPolling(activeJobId: string | null) {
   const qc = useQueryClient();
 
+  const activeJobDiscovery = useQuery({
+    queryKey: ["job", "active-scan"],
+    queryFn: fetchActiveScanJob,
+    enabled: !activeJobId,
+    retry: false,
+    refetchInterval: 15_000,
+  });
+
+  const resolvedJobId =
+    activeJobId ??
+    (activeJobDiscovery.data?.status === "queued" || activeJobDiscovery.data?.status === "running"
+      ? activeJobDiscovery.data.job_id
+      : null);
+
+  useEffect(() => {
+    if (resolvedJobId && resolvedJobId !== activeJobId) {
+      storeScanJobId(resolvedJobId);
+    }
+  }, [resolvedJobId, activeJobId]);
+
   const jobQuery = useQuery({
-    queryKey: ["job", activeJobId],
-    queryFn: () => fetchJobStatus(activeJobId!),
-    enabled: Boolean(activeJobId),
+    queryKey: ["job", resolvedJobId],
+    queryFn: () => fetchJobStatus(resolvedJobId!),
+    enabled: Boolean(resolvedJobId),
     refetchInterval: (query) => {
       const status = query.state.data?.status;
       if (status === "queued" || status === "running") return 4_000;
@@ -106,6 +126,7 @@ export function useActiveScanPolling(activeJobId: string | null) {
 
   return {
     job: jobQuery.data,
+    jobId: resolvedJobId,
     isScanning,
     progress,
     isLoading: jobQuery.isLoading,

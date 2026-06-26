@@ -84,12 +84,17 @@ export async function apiGetBlob(path: string): Promise<{ blob: Blob; filename: 
   return { blob, filename };
 }
 
-export async function apiPostJson<T, B = unknown>(path: string, body: B): Promise<T> {
+export async function apiPostJson<T, B = unknown>(
+  path: string,
+  body: B,
+  init?: RequestInit,
+): Promise<T> {
   const base = viteApiBase() || defaultBase;
   const res = await fetch(`${base}${path}`, {
     method: "POST",
     headers: { ...authHeaders(), "Content-Type": "application/json" },
     body: JSON.stringify(body ?? {}),
+    ...init,
   });
   if (!res.ok) {
     signOutIfUnauthorized(res.status, path);

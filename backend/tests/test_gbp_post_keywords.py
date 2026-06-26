@@ -1,8 +1,10 @@
 from app.services.gbp_service import (
+    _format_gbp_bullet_lines,
     _parse_post_prompt_slots,
     _parse_structured_prompt_slot,
     _resolve_target_keyword_from_prompt,
     _strip_design_artifacts_from_post,
+    normalize_gbp_post_body,
 )
 
 
@@ -116,3 +118,30 @@ def test_strip_design_artifacts_removes_hex_codes():
     assert "#FF5F32" not in cleaned
     assert "#000000" not in cleaned
     assert "run through the composition" in cleaned
+
+
+def test_strip_design_artifacts_preserves_line_breaks():
+    raw = "Intro paragraph.\n\n• First bullet\n• Second bullet"
+    cleaned = _strip_design_artifacts_from_post(raw)
+    assert "\n" in cleaned
+    assert "• First bullet" in cleaned
+    assert "• Second bullet" in cleaned
+
+
+def test_format_gbp_bullet_lines_splits_inline_bullets():
+    raw = (
+        "Ready for results? • Faster ranking improvements • Target keywords that convert "
+        "• Real-time competitor monitoring"
+    )
+    formatted = _format_gbp_bullet_lines(raw)
+    assert "• Faster ranking improvements" in formatted
+    assert formatted.count("•") >= 3
+    assert "\n•" in formatted or formatted.startswith("•")
+
+
+def test_normalize_preserves_user_bullet_layout():
+    raw = "Intro text.\n\n• Bullet one\n• Bullet two\n\nCall to action."
+    out = normalize_gbp_post_body(raw, auto_complete=False)
+    assert "• Bullet one" in out
+    assert "• Bullet two" in out
+    assert "\n" in out

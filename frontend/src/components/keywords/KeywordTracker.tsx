@@ -448,54 +448,58 @@ export function KeywordTracker() {
       ) : (
         <div className="space-y-4">
           {publishedKeywords.length > 0 && (
-            <div className="overflow-x-auto rounded-xl border border-emerald-200">
+            <div className="rounded-xl border border-emerald-200">
               <div className="border-b border-emerald-200 bg-emerald-50 px-4 py-2 text-xs font-semibold uppercase tracking-wide text-emerald-800">
                 Published GBP keywords ({publishedKeywords.length})
               </div>
-              <table className="min-w-full text-sm">
-                <thead className="bg-gray-50 border-b border-gray-200">
-                  <tr>
-                    <th className="px-4 py-2.5 text-left font-medium text-gray-600 w-48">Keyword</th>
-                    <th className="px-4 py-2.5 text-center font-medium text-gray-600">Organic rank</th>
-                    <th className="px-4 py-2.5 text-center font-medium text-gray-600">Δ week</th>
-                    <th className="px-4 py-2.5 text-center font-medium text-gray-600">Maps rank</th>
-                    <th className="px-4 py-2.5 text-center font-medium text-gray-600">Δ week</th>
-                    <th className="px-4 py-2.5 text-center font-medium text-gray-600">Volume</th>
-                    <th className="px-4 py-2.5 text-center font-medium text-gray-600">Organic trend (12w)</th>
-                    <th className="px-4 py-2.5 text-center font-medium text-gray-600">Source</th>
-                    <th className="px-4 py-2.5 text-right font-medium text-gray-600">Last checked</th>
-                    <th className="px-4 py-2.5" />
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-gray-100">{renderKeywordRows(publishedKeywords)}</tbody>
-              </table>
+              <div className="max-h-[420px] overflow-y-auto overflow-x-auto pr-1">
+                <table className="min-w-[1100px] w-full text-sm">
+                  <thead className="sticky top-0 z-10 bg-gray-50 border-b border-gray-200 shadow-[0_1px_0_0_#E5E7EB]">
+                    <tr>
+                      <th className="px-4 py-2.5 text-left font-medium text-gray-600 w-48">Keyword</th>
+                      <th className="px-4 py-2.5 text-center font-medium text-gray-600">Organic rank</th>
+                      <th className="px-4 py-2.5 text-center font-medium text-gray-600">Δ week</th>
+                      <th className="px-4 py-2.5 text-center font-medium text-gray-600">Maps rank</th>
+                      <th className="px-4 py-2.5 text-center font-medium text-gray-600">Δ week</th>
+                      <th className="px-4 py-2.5 text-center font-medium text-gray-600">Volume</th>
+                      <th className="px-4 py-2.5 text-center font-medium text-gray-600">Organic trend (12w)</th>
+                      <th className="px-4 py-2.5 text-center font-medium text-gray-600">Source</th>
+                      <th className="px-4 py-2.5 text-right font-medium text-gray-600">Last checked</th>
+                      <th className="px-4 py-2.5" />
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-100">{renderKeywordRows(publishedKeywords)}</tbody>
+                </table>
+              </div>
             </div>
           )}
 
           {otherKeywords.length > 0 && (
-            <div className="overflow-x-auto rounded-xl border border-gray-200">
+            <div className="rounded-xl border border-gray-200">
               {publishedKeywords.length > 0 && (
                 <div className="border-b border-gray-200 bg-gray-50 px-4 py-2 text-xs font-semibold uppercase tracking-wide text-gray-600">
                   Other tracked keywords ({otherKeywords.length})
                 </div>
               )}
-              <table className="min-w-full text-sm">
-                <thead className="bg-gray-50 border-b border-gray-200">
-                  <tr>
-                    <th className="px-4 py-2.5 text-left font-medium text-gray-600 w-48">Keyword</th>
-                    <th className="px-4 py-2.5 text-center font-medium text-gray-600">Organic rank</th>
-                    <th className="px-4 py-2.5 text-center font-medium text-gray-600">Δ week</th>
-                    <th className="px-4 py-2.5 text-center font-medium text-gray-600">Maps rank</th>
-                    <th className="px-4 py-2.5 text-center font-medium text-gray-600">Δ week</th>
-                    <th className="px-4 py-2.5 text-center font-medium text-gray-600">Volume</th>
-                    <th className="px-4 py-2.5 text-center font-medium text-gray-600">Organic trend (12w)</th>
-                    <th className="px-4 py-2.5 text-center font-medium text-gray-600">Source</th>
-                    <th className="px-4 py-2.5 text-right font-medium text-gray-600">Last checked</th>
-                    <th className="px-4 py-2.5" />
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-gray-100">{renderKeywordRows(otherKeywords)}</tbody>
-              </table>
+              <div className="max-h-[420px] overflow-y-auto overflow-x-auto pr-1">
+                <table className="min-w-[1100px] w-full text-sm">
+                  <thead className="sticky top-0 z-10 bg-gray-50 border-b border-gray-200 shadow-[0_1px_0_0_#E5E7EB]">
+                    <tr>
+                      <th className="px-4 py-2.5 text-left font-medium text-gray-600 w-48">Keyword</th>
+                      <th className="px-4 py-2.5 text-center font-medium text-gray-600">Organic rank</th>
+                      <th className="px-4 py-2.5 text-center font-medium text-gray-600">Δ week</th>
+                      <th className="px-4 py-2.5 text-center font-medium text-gray-600">Maps rank</th>
+                      <th className="px-4 py-2.5 text-center font-medium text-gray-600">Δ week</th>
+                      <th className="px-4 py-2.5 text-center font-medium text-gray-600">Volume</th>
+                      <th className="px-4 py-2.5 text-center font-medium text-gray-600">Organic trend (12w)</th>
+                      <th className="px-4 py-2.5 text-center font-medium text-gray-600">Source</th>
+                      <th className="px-4 py-2.5 text-right font-medium text-gray-600">Last checked</th>
+                      <th className="px-4 py-2.5" />
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-100">{renderKeywordRows(otherKeywords)}</tbody>
+                </table>
+              </div>
             </div>
           )}
         </div>

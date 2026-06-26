@@ -15,3 +15,8 @@ export function fetchJobStatus(jobId: string) {
   return apiGet<JobStatus>(`/api/v1/jobs/${jobId}`);
 }
 
+/** Latest queued/running maps_scan for the signed-in client (404 when idle). */
+export function fetchActiveScanJob() {
+  return apiGet<JobStatus>("/api/v1/jobs/active/scan");
+}
+

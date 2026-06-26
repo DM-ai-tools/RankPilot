@@ -1456,7 +1456,47 @@ async def connect_wordpress(
     if not resp.is_success:
         raise HTTPException(status_code=400, detail=f"WordPress returned {resp.status_code}: {resp.text[:200]}")
 
-    me = resp.json()
+    raw_body = resp.content.strip()
+    if not raw_body:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=(
+                "WordPress returned an empty response when verifying credentials. "
+                "A security plugin (e.g. sgcaptcha, Wordfence, Shield Security) is likely blocking "
+                "REST API requests from the RankPilot server IP. "
+                "Fix: in your WordPress security plugin, whitelist /wp-json/ REST API requests "
+                "or add the RankPilot server IP to the allowlist."
+            ),
+        )
+    is_html = b"<html" in raw_body[:50].lower() or b"<!doctype" in raw_body[:50].lower()
+    if is_html:
+        body_lower = raw_body[:600].lower()
+        if b"captcha" in body_lower or b"sgcaptcha" in body_lower or b"challenge" in body_lower or b"bot" in body_lower:
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail=(
+                    "Your WordPress site is blocking RankPilot with a CAPTCHA / bot-protection plugin. "
+                    "The REST API endpoint /wp-json/wp/v2/users/me is returning a bot challenge instead of JSON. "
+                    "To fix: in WordPress → your security plugin (sgcaptcha / Wordfence / Shield), "
+                    "add an exception for /wp-json/ REST API paths so authenticated requests are allowed through."
+                ),
+            )
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=(
+                "WordPress returned an HTML page instead of JSON for the REST API. "
+                "Check that https://clicktrends.com.au/wp-json/wp/v2/users/me is accessible and not redirected. "
+                "Make sure REST API is not disabled and the site URL is correct (not /wp-admin)."
+            ),
+        )
+
+    try:
+        me = resp.json()
+    except Exception:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"WordPress returned non-JSON content ({resp.status_code}). Preview: {resp.text[:300]}",
+        )
     wp_name = me.get("name", wp_login) if isinstance(me, dict) else wp_login
 
     # Store credentials (app_password stored in access_token field)
@@ -1534,7 +1574,52 @@ async def list_wordpress_pages(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail=f"WordPress pages fetch failed ({resp.status_code}): {resp.text[:220]}",
         )
-    payload = resp.json()
+    raw_body = resp.content.strip()
+    if not raw_body:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=(
+                "WordPress returned an empty response for the pages list. "
+                "This usually means the WP REST API is disabled, blocked by a security plugin, "
+                "or the site URL in Business Setup is incorrect. "
+                "Check: Settings → Permalinks (re-save), and that /wp-json/wp/v2/pages is accessible."
+            ),
+        )
+    content_type = resp.headers.get("content-type", "")
+    is_html = "html" in content_type or (
+        raw_body[:20].lower().lstrip().startswith(b"<")
+    )
+    if is_html:
+        body_lower = raw_body[:500].lower()
+        if b"captcha" in body_lower or b"sgcaptcha" in body_lower or b"bot" in body_lower or b"challenge" in body_lower:
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail=(
+                    "Your WordPress site is blocking RankPilot with a CAPTCHA / bot-protection plugin (sgcaptcha / Wordfence / similar). "
+                    "To fix this: in WordPress → your security plugin settings, whitelist the server IP "
+                    f"(currently {resp.headers.get('x-real-ip', 'the RankPilot server IP')}) "
+                    "or add an exception for /wp-json/ REST API requests. "
+                    "On Railway/shared hosting this is the outbound IP of the backend service."
+                ),
+            )
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=(
+                "WordPress returned an HTML page instead of JSON — "
+                "the REST API endpoint may be redirected or blocked by a security plugin or login wall. "
+                "Check that https://clicktrends.com.au/wp-json/wp/v2/pages is accessible and returns JSON."
+            ),
+        )
+    try:
+        payload = resp.json()
+    except Exception:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=(
+                f"WordPress returned non-JSON content ({resp.status_code}). "
+                f"Preview: {resp.text[:300]}"
+            ),
+        )
     rows = payload if isinstance(payload, list) else []
     items: list[WordPressPageSummary] = []
     for r in rows:

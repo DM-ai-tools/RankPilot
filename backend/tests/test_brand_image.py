@@ -84,6 +84,9 @@ def test_preferred_dark_background_forces_white_logo(tmp_path: Path):
     )
     assert picked == Path(light_logo)
     assert backdrop is None
+
+
+def test_apply_brand_on_light_background(tmp_path: Path):
     base = tmp_path / "photo.png"
     light_logo = tmp_path / "light.png"
     dark_logo = tmp_path / "dark.png"

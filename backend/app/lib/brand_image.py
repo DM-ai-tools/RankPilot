@@ -117,16 +117,29 @@ def _draw_backdrop(
     kind: BackdropKind,
     *,
     cover_ai_branding: bool = False,
+    canvas_w: int = 0,
+    canvas_h: int = 0,
 ) -> None:
     if not kind:
         return
     from PIL import ImageDraw
 
     pad = max(6, int(min(logo_w, logo_h) * 0.12))
-    if cover_ai_branding:
-        # Wider pill hides AI-hallucinated logos/text in the same corner before we paste the real logo.
-        pad = max(pad, int(max(logo_w, logo_h) * 0.65))
-    fill = (15, 23, 42, 190) if kind == "dark" else (255, 255, 255, 215)
+    fill = (15, 23, 42, 215) if kind == "dark" else (255, 255, 255, 235)
+
+    if cover_ai_branding and canvas_w > 0 and canvas_h > 0:
+        # Full-width top band — AI models often paint headline text across the top centre,
+        # which overlaps a corner-only logo pill. Clear the whole band before pasting logo.
+        band_h = max(
+            y + logo_h + pad * 3,
+            int(canvas_h * 0.15),
+            logo_h + pad * 5,
+        )
+        box = (0, 0, canvas_w, band_h)
+        draw = ImageDraw.Draw(layer)
+        draw.rounded_rectangle(box, radius=max(8, pad), fill=fill)
+        return
+
     box = (x - pad, y - pad, x + logo_w + pad, y + logo_h + pad)
     draw = ImageDraw.Draw(layer)
     draw.rounded_rectangle(box, radius=max(6, pad // 2), fill=fill)
@@ -185,6 +198,8 @@ def apply_brand_to_image_path(
                     logo.height,
                     clear_kind,
                     cover_ai_branding=True,
+                    canvas_w=w,
+                    canvas_h=h,
                 )
                 layer.paste(logo, (x, y), logo)
                 composed = Image.alpha_composite(base, layer)

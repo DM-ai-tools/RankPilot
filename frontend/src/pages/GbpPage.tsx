@@ -954,7 +954,7 @@ function PostsTab({
                   value={editBody}
                   onChange={(e) => setEditBody(e.target.value)}
                   rows={10}
-                  className={`w-full resize-y rounded border bg-white p-2.5 text-[12px] leading-relaxed text-navy focus:outline-none ${
+                  className={`w-full resize-y whitespace-pre-wrap rounded border bg-white p-2.5 text-[12px] leading-relaxed text-navy focus:outline-none ${
                     canEditBody ? "border-[#34A853] focus:ring-1 focus:ring-[#34A853]" : "border-transparent text-navy/80"
                   }`}
                 />
@@ -1170,9 +1170,11 @@ function PostsTab({
                 <p className="text-[11px] font-semibold text-[#202124] leading-snug">
                   {d.business_name || "Your Business"}
                 </p>
-                <p className="mt-0.5 text-[11px] leading-relaxed text-[#5F6368] line-clamp-3">
+                <p className="mt-0.5 max-h-32 overflow-y-auto text-[11px] leading-relaxed text-[#5F6368] whitespace-pre-wrap">
                   {editBody
-                    ? editBody.slice(0, 150) + (editBody.length > 150 ? "…" : "")
+                    ? editBody.length > 400
+                      ? `${editBody.slice(0, 400)}…`
+                      : editBody
                     : "Your post text will appear here once generated."}
                 </p>
                 <p className="mt-1.5 text-[11px] font-medium text-[#1A73E8]">Learn more</p>

@@ -138,6 +138,7 @@ export function CitationsPage() {
 
   const syncMut = useMutation({
     mutationFn: syncCitations,
+    retry: 0,
     onSuccess: async () => {
       await qc.invalidateQueries({ queryKey: ["citations", token] });
       await qc.invalidateQueries({ queryKey: ["me", token] });
@@ -153,15 +154,12 @@ export function CitationsPage() {
 
   useEffect(() => {
     if (!token || syncTriggered.current) return;
-    if (!citations.isSuccess && !citations.isError) return;
+    if (!citations.isSuccess) return;
     const items = citations.data?.items ?? [];
-    const hasRecent = items.some((x) => {
-      if (!x.last_checked) return false;
-      return Date.now() - new Date(x.last_checked).getTime() < 24 * 60 * 60 * 1000;
-    });
     syncTriggered.current = true;
-    if (!items.length || !hasRecent) void syncMut.mutate();
-  }, [token, citations.isSuccess, citations.isError, citations.data?.items, syncMut]);
+    // Only auto-sync when there is no citation data yet — never block the page on re-scan.
+    if (items.length === 0) void syncMut.mutate();
+  }, [token, citations.isSuccess, citations.data?.items, syncMut]);
 
   const items = citations.data?.items ?? [];
   const total       = items.length;
@@ -197,7 +195,9 @@ export function CitationsPage() {
 
         {/* Status messages */}
         {syncMut.isPending && (
-          <p className="mb-3 text-xs text-rp-tlight">Scraping {total || "8"} directories via Firecrawl…</p>
+          <p className="mb-3 text-xs text-rp-tlight">
+            Checking {total || "8"} directories in parallel via Firecrawl (usually 30–60 seconds)…
+          </p>
         )}
         {!syncMut.isPending && latestCheckedAt && (
           <p className="mb-3 text-xs text-rp-tlight">

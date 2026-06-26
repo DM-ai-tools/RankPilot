@@ -5,7 +5,6 @@ import {
   ClipboardList,
   FilePenLine,
   FileText,
-  KeyRound,
   LayoutDashboard,
   LogOut,
   Map,
@@ -34,7 +33,8 @@ const NAV_ITEMS: {
   { to: "/gbp", label: "GBP Optimizer", icon: MapPin },
   { to: "/citations", label: "Citations", icon: ClipboardList, badgeKey: "citations" },
   { to: "/reviews", label: "Reviews", icon: Star },
-  { to: "/ranks", label: "Keywords", icon: KeyRound },
+  // Keyword research is on Content Engine + GBP Optimizer — no separate Keywords page.
+  // { to: "/ranks", label: "Keywords", icon: KeyRound },
   { to: "/ga4", label: "GA4 Analytics", icon: Activity },
   { to: "/reports", label: "Monthly Report", icon: FileText },
   { to: "/onboarding", label: "Business Setup", icon: Building2 },

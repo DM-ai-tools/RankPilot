@@ -1,3 +1,8 @@
+/**
+ * Standalone Keywords page — disabled in nav (see Sidebar + App.tsx).
+ * Keyword research lives on Content Engine (Ahrefs checker) and GBP Optimizer (research tabs).
+ * /ranks redirects to /content for old bookmarks.
+ */
 import { useQuery } from "@tanstack/react-query";
 import { TrendingUp, TrendingDown, Minus, KeyRound } from "lucide-react";
 

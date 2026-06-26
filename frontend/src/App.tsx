@@ -11,7 +11,6 @@ import { GbpPage } from "./pages/GbpPage";
 import { NewScanPage } from "./pages/NewScanPage";
 import { OnboardingPage } from "./pages/OnboardingPage";
 import { OpportunitiesPage } from "./pages/OpportunitiesPage";
-import { RanksPage } from "./pages/RanksPage";
 import { ReportsPage } from "./pages/ReportsPage";
 import { ResultsLoadingPage } from "./pages/ResultsLoadingPage";
 import { ReviewsPage } from "./pages/ReviewsPage";
@@ -43,7 +42,8 @@ export default function App() {
             <Route path="opportunities" element={<OpportunitiesPage />} />
             <Route path="content" element={<SeoWebsitePage />} />
             <Route path="scan" element={<NewScanPage />} />
-            <Route path="ranks" element={<RanksPage />} />
+            {/* Keyword research: Content Engine (Ahrefs checker) + GBP Optimizer (research tabs) */}
+            <Route path="ranks" element={<Navigate to="/content" replace />} />
             <Route path="gbp" element={<GbpPage />} />
             <Route path="seo-website" element={<Navigate to="/content" replace />} />
             <Route path="citations" element={<CitationsPage />} />

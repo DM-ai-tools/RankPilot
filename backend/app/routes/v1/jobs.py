@@ -15,6 +15,17 @@ def get_jobs_service(session: DbSession) -> JobsService:
     return JobsService(session)
 
 
+@router.get("/active/scan", response_model=JobStatusResponse)
+async def get_active_scan(
+    client_id: CurrentClientId,
+    svc: JobsService = Depends(get_jobs_service),
+) -> JobStatusResponse:
+    row = await svc.get_active_maps_scan(client_id)
+    if row is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No active maps scan")
+    return row
+
+
 @router.get("/{job_id}", response_model=JobStatusResponse)
 async def get_job(
     job_id: UUID,

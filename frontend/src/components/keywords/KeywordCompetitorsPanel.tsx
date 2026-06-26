@@ -360,13 +360,20 @@ function CompetitorGbpPostsSection({
  * descriptions — overview only, never injected into the content.
  * Click a competitor to see how they rank and which keywords they use.
  */
-export function KeywordCompetitorsPanel({ keyword }: { keyword?: string | null }) {
+export function KeywordCompetitorsPanel({
+  keyword,
+  country,
+}: {
+  keyword?: string | null;
+  country?: string;
+}) {
   const kw = (keyword ?? "").trim();
+  const cc = (country ?? "").trim().toLowerCase() || undefined;
   const [openDomain, setOpenDomain] = useState<string | null>(null);
 
   const q = useQuery({
-    queryKey: ["keywords", "serp-competitors", kw],
-    queryFn: () => fetchKeywordSerpCompetitors(kw),
+    queryKey: ["keywords", "serp-competitors", kw, cc],
+    queryFn: () => fetchKeywordSerpCompetitors(kw, cc),
     enabled: Boolean(kw),
     staleTime: 30 * 60_000,
     gcTime: 60 * 60_000,
@@ -423,6 +430,60 @@ export function KeywordCompetitorsPanel({ keyword }: { keyword?: string | null }
               );
             })}
           </div>
+
+          <div className="mt-3 max-h-[280px] overflow-y-auto overflow-x-auto rounded-md border border-[#F3CFA4] bg-white">
+            <table className="w-full min-w-[520px] text-left text-[11px]">
+              <thead className="sticky top-0 z-10 bg-[#FFF8F0] text-[10px] font-bold uppercase tracking-wide text-[#9A5B00]">
+                <tr>
+                  <th className="px-3 py-2">Organic rank</th>
+                  <th className="px-3 py-2">Competitor</th>
+                  <th className="px-3 py-2">Ranking page</th>
+                  <th className="px-3 py-2 text-center">Maps pack</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-[#F3CFA4]/60">
+                {competitors.map((c) => (
+                  <tr
+                    key={`${c.domain}-${c.position ?? "m"}`}
+                    className={`cursor-pointer hover:bg-[#FFF8F0] ${openDomain === c.domain ? "bg-[#FFF3E2]" : ""}`}
+                    onClick={() => setOpenDomain(openDomain === c.domain ? null : c.domain)}
+                  >
+                    <td className="px-3 py-2 font-bold text-[#C25E00] whitespace-nowrap">
+                      {c.position != null ? `#${c.position}` : "—"}
+                    </td>
+                    <td className="px-3 py-2 font-semibold text-navy">{c.domain}</td>
+                    <td className="max-w-[240px] px-3 py-2 text-rp-tmid">
+                      {c.title ? (
+                        <a
+                          href={c.url}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="block truncate hover:text-[#1A73E8] hover:underline"
+                          title={c.title}
+                          onClick={(e) => e.stopPropagation()}
+                        >
+                          {c.title}
+                        </a>
+                      ) : (
+                        "—"
+                      )}
+                    </td>
+                    <td className="px-3 py-2 text-center whitespace-nowrap">
+                      {c.in_local_pack ? (
+                        <span className="inline-flex items-center gap-0.5 text-[10px] font-semibold text-[#0050A0]">
+                          <MapPin className="h-3 w-3" />
+                          {c.local_pack_position ? `#${c.local_pack_position}` : "Yes"}
+                        </span>
+                      ) : (
+                        <span className="text-rp-tlight">—</span>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+
           {openItem && <CompetitorDetail item={openItem} keyword={kw} />}
         </>
       )}

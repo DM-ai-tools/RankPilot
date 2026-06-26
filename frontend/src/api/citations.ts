@@ -18,5 +18,20 @@ export type SyncCitationsResponse = {
 };
 
 export async function syncCitations(): Promise<SyncCitationsResponse> {
-  return apiPostJson("/api/v1/citations/sync", {});
+  const controller = new AbortController();
+  const timer = window.setTimeout(() => controller.abort(), 120_000);
+  try {
+    return await apiPostJson<SyncCitationsResponse>("/api/v1/citations/sync", {}, {
+      signal: controller.signal,
+    });
+  } catch (err: unknown) {
+    if (err instanceof DOMException && err.name === "AbortError") {
+      throw new Error(
+        "Citation sync timed out — directories are checked in parallel but some sites may be slow. Try Sync Now again.",
+      );
+    }
+    throw err;
+  } finally {
+    window.clearTimeout(timer);
+  }
 }

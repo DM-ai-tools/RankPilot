@@ -13,6 +13,7 @@ import { useSessionState } from "../../lib/useSessionState";
 import { Button } from "../ui/Button";
 import { Card } from "../ui/Card";
 import { KeywordDataSourceBadge } from "./KeywordDataSourceBadge";
+import { KeywordCompetitorsPanel } from "./KeywordCompetitorsPanel";
 
 const COUNTRY_OPTIONS = [
   { code: "au", label: "Australia" },
@@ -281,6 +282,10 @@ export function AhrefsKeywordOverview({ defaultKeyword = "" }: Props) {
             ))}
           </div>
         </Card>
+      ) : null}
+
+      {activeKeyword ? (
+        <KeywordCompetitorsPanel keyword={activeKeyword} country={country} />
       ) : null}
 
       {err ? (

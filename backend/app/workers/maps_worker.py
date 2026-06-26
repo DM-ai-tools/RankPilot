@@ -219,6 +219,37 @@ async def _run_maps_scan_core(job_id: str, client_id: str, payload: dict, client
             business_url,
         )
 
+    total_suburbs = len(suburbs)
+    already_scanned_ids: set[str] = set()
+    async with maker() as session:
+        await session.execute(text("SET LOCAL row_security = off"))
+        fresh_rows = (
+            await session.execute(
+                text(
+                    """
+                    SELECT DISTINCT suburb_id::text AS suburb_id
+                    FROM rp_rank_history
+                    WHERE client_id = :cid
+                      AND LOWER(TRIM(keyword)) = LOWER(TRIM(:kw))
+                      AND checked_at > now() - INTERVAL '6 hours'
+                    """
+                ),
+                {"cid": client_id, "kw": keyword},
+            )
+        ).mappings().all()
+        already_scanned_ids = {str(r["suburb_id"]) for r in fresh_rows}
+
+    suburbs_to_scan = [s for s in suburbs if str(s["id"]) not in already_scanned_ids]
+    skipped_fresh = total_suburbs - len(suburbs_to_scan)
+    if skipped_fresh:
+        logger.info(
+            "maps_scan job %s: resuming — %d/%d suburbs already scanned in last 6h for %r",
+            job_id,
+            skipped_fresh,
+            total_suburbs,
+            keyword,
+        )
+
     # ---------- Ahrefs keyword volumes (cached when possible) ----------
     ahrefs_volumes: dict[str, int] = {}
     volume_source = "none"
@@ -251,7 +282,26 @@ async def _run_maps_scan_core(job_id: str, client_id: str, payload: dict, client
     results: list[tuple[str, str, str, str, int | None, int | None, list[dict]]] = []
     checked_at = datetime.now(UTC)
     progress_lock = asyncio.Lock()
-    progress = {"checked": 0, "total": len(suburbs), "found": 0, "inserted": 0}
+    progress = {
+        "checked": skipped_fresh,
+        "total": total_suburbs,
+        "found": 0,
+        "inserted": skipped_fresh,
+    }
+
+    if skipped_fresh and suburbs_to_scan:
+        await _update_job_progress(
+            job_id,
+            result={
+                "progress": {
+                    "suburbs_checked": progress["checked"],
+                    "suburbs_total": progress["total"],
+                    "found": progress["found"],
+                    "rows_inserted": progress["inserted"],
+                    "keyword": keyword,
+                }
+            },
+        )
 
     async def _check(
         suburb_id: str,
@@ -332,30 +382,34 @@ async def _run_maps_scan_core(job_id: str, client_id: str, payload: dict, client
             s.get("lat"),
             s.get("lng"),
         )
-        for s in suburbs
+        for s in suburbs_to_scan
     ]
+    if not tasks:
+        logger.info("maps_scan job %s: all %d suburbs already fresh for %r", job_id, total_suburbs, keyword)
     for i in range(0, len(tasks), _BATCH):
         batch = tasks[i : i + _BATCH]
         await asyncio.gather(*batch)
 
     await _reorder_suburb_priorities_by_volume(client_id, keyword)
 
-    total = len(results)
+    batch_results = len(results)
     found = progress["found"]
     inserted = progress["inserted"]
-    skipped_stale = total - inserted
+    checked = progress["checked"]
+    suburbs_total = progress["total"]
+    skipped_stale = batch_results - (inserted - skipped_fresh) if batch_results else 0
     await _update_job(
         job_id,
         "succeeded",
         result={
-            "suburbs_checked": total,
+            "suburbs_checked": checked,
             "rows_inserted": inserted,
-            "rows_skipped_stale": skipped_stale,
+            "rows_skipped_stale": max(0, skipped_stale),
             "found": found,
             "keyword": keyword,
             "progress": {
-                "suburbs_checked": total,
-                "suburbs_total": total,
+                "suburbs_checked": checked,
+                "suburbs_total": suburbs_total,
                 "found": found,
                 "rows_inserted": inserted,
                 "keyword": keyword,
@@ -364,7 +418,7 @@ async def _run_maps_scan_core(job_id: str, client_id: str, payload: dict, client
     )
     logger.info(
         "maps_scan %s done: %d/%d suburbs ranked, inserted=%d, skipped_stale=%d",
-        job_id, found, total, inserted, skipped_stale,
+        job_id, found, suburbs_total, inserted, max(0, skipped_stale),
     )
 
 

@@ -1,7 +1,7 @@
+import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { CircleAlert, CircleCheck } from "lucide-react";
-import { useEffect, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 
 import { formatApiError } from "../api/client";
 import { fetchMe } from "../api/onboarding";
@@ -9,6 +9,7 @@ import { enqueueMapsScan } from "../api/scans";
 import { TopBar } from "../components/layout/TopBar";
 import { Button } from "../components/ui/Button";
 import { Card, CardHeader } from "../components/ui/Card";
+import { storeScanJobId } from "../hooks/useScanPolling";
 import { useAuthStore } from "../stores/authStore";
 import { scanKeywordFromPrimary } from "../lib/primaryKeywords";
 
@@ -70,6 +71,7 @@ function StepBar({ current }: { current: Step }) {
 
 export function NewScanPage() {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const qc       = useQueryClient();
   const token    = useAuthStore((s) => s.accessToken);
 
@@ -91,10 +93,15 @@ export function NewScanPage() {
   useEffect(() => {
     if (!prof) return;
     if (prof.business_url)    setBusinessUrl(prof.business_url);
-    if (prof.primary_keyword) setKeyword(scanKeywordFromPrimary(prof.primary_keyword));
+    const urlKw = (searchParams.get("keyword") || "").trim();
+    if (urlKw) {
+      setKeyword(urlKw);
+    } else if (prof.primary_keyword) {
+      setKeyword(scanKeywordFromPrimary(prof.primary_keyword));
+    }
     if (prof.metro_label)     setMetro(prof.metro_label);
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [prof?.client_id]);           // run once per client, not on every field change
+  }, [prof?.client_id, searchParams]);           // run once per client, not on every field change
 
   const domain = (() => {
     try {
@@ -109,9 +116,11 @@ export function NewScanPage() {
 
   const scan = useMutation({
     mutationFn: () => enqueueMapsScan({ keyword, radius_km: effectiveRadius }),
-    onSuccess:  () => {
+    onSuccess: (data) => {
+      storeScanJobId(data.job_id);
       void qc.invalidateQueries({ queryKey: ["ranks"] });
       void qc.invalidateQueries({ queryKey: ["dashboard"] });
+      void qc.invalidateQueries({ queryKey: ["job", "active-scan"] });
     },
   });
 
@@ -282,7 +291,7 @@ export function NewScanPage() {
                 <span>
                   This scan checks <strong>{approxSuburbs} suburbs</strong> around{" "}
                   <strong>{metro.split(",")[0]}</strong> for{" "}
-                  <strong>"{keyword}"</strong>. Results ready in <strong>3–5 min</strong>.
+                  <strong>"{keyword}"</strong>. Results usually take <strong>8–12 min</strong> for ~25 km.
                 </span>
               </div>
             </div>
@@ -323,18 +332,18 @@ export function NewScanPage() {
               {scan.isSuccess && (
                 <div className="rounded-lg border border-emerald-500/25 bg-emerald-50 px-4 py-4">
                   <p className="text-[13px] font-bold text-emerald-800">
-                    Scan queued successfully. Job ID:{" "}
-                    <code className="rounded bg-white px-1.5 py-0.5 text-navy">{scan.data.job_id}</code>
+                    Scan started for &ldquo;{keyword}&rdquo;
                   </p>
                   <p className="mt-1 text-[12px] text-emerald-700">
-                    Worker picks up jobs every 30 s. Rankings appear on the dashboard in 3–5 minutes.
+                    Checking ~{approxSuburbs} suburbs — usually takes <strong>8–12 minutes</strong> for a
+                    25 km scan. The map updates live as suburbs complete.
                   </p>
                   <button
                     type="button"
-                    onClick={() => void navigate("/")}
+                    onClick={() => void navigate(`/map?keyword=${encodeURIComponent(keyword)}`)}
                     className="mt-3 text-sm font-bold text-[#72C219] hover:underline"
                   >
-                    Go to Dashboard →
+                    Watch live on Maps Tracker →
                   </button>
                 </div>
               )}

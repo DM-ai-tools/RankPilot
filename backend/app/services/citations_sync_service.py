@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
+import json as _json
+import logging
 import re
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -15,6 +18,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
 from app.services.google_places_new_client import display_name_text, place_details, places_search_text
+
+logger = logging.getLogger(__name__)
+
+FIRECRAWL_SCRAPE_TIMEOUT_S = 25.0
+DIRECTORY_SCRAPE_CONCURRENCY = 4
 
 
 @dataclass(frozen=True)
@@ -119,7 +127,7 @@ def _mk_url(t: DirectoryTarget, business: str, metro: str) -> str:
 async def _firecrawl_scrape(url: str, api_key: str) -> str:
     payload = {"url": url, "formats": ["markdown"]}
     headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
-    async with httpx.AsyncClient(timeout=45) as c:
+    async with httpx.AsyncClient(timeout=FIRECRAWL_SCRAPE_TIMEOUT_S) as c:
         r = await c.post("https://api.firecrawl.dev/v1/scrape", json=payload, headers=headers)
         r.raise_for_status()
         data = r.json()
@@ -127,6 +135,16 @@ async def _firecrawl_scrape(url: str, api_key: str) -> str:
         return ""
     d = data.get("data") or {}
     return str(d.get("markdown") or d.get("content") or "")
+
+
+async def _firecrawl_scrape_safe(url: str, api_key: str) -> str:
+    try:
+        return await asyncio.wait_for(
+            _firecrawl_scrape(url, api_key),
+            timeout=FIRECRAWL_SCRAPE_TIMEOUT_S + 5,
+        )
+    except TimeoutError:
+        raise TimeoutError(f"timed out after {int(FIRECRAWL_SCRAPE_TIMEOUT_S)}s") from None
 
 
 async def _google_places_nap(
@@ -209,7 +227,7 @@ async def _google_places_nap(
 
 async def _website_nap_from_firecrawl(url: str, api_key: str) -> dict:
     try:
-        md = await _firecrawl_scrape(url, api_key)
+        md = await _firecrawl_scrape_safe(url, api_key)
     except Exception:
         return {"address": "", "phone": ""}
     txt = re.sub(r"\s+", " ", md or " ").strip()
@@ -299,15 +317,22 @@ async def sync_citations_for_client(session: AsyncSession, client_id: UUID) -> d
     now = datetime.now(UTC)
     updates = 0
 
-    import json as _json
+    sem = asyncio.Semaphore(DIRECTORY_SCRAPE_CONCURRENCY)
 
-    for d in DIRECTORIES:
+    async def _scrape_directory(d: DirectoryTarget) -> tuple[DirectoryTarget, str, str | None]:
         target_url = _mk_url(d, bname, metro)
-        try:
-            md = await _firecrawl_scrape(target_url, crawl_api_key)
-        except Exception as exc:  # noqa: BLE001
-            warnings.append(f"{d.name}: {exc!s}")
-            md = ""
+        async with sem:
+            try:
+                md = await _firecrawl_scrape_safe(target_url, crawl_api_key)
+                return d, md, None
+            except Exception as exc:  # noqa: BLE001
+                return d, "", f"{d.name}: {exc!s}"
+
+    scrape_results = await asyncio.gather(*[_scrape_directory(d) for d in DIRECTORIES])
+
+    for d, md, scrape_err in scrape_results:
+        if scrape_err:
+            warnings.append(scrape_err)
         txt = _norm_text(md)
 
         # ── Extract what was actually found on this directory page ───────────

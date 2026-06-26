@@ -106,9 +106,9 @@ export function SuburbPageRankingsCard({ enabled, token }: Props) {
             <strong>Refresh rankings</strong> to import them from WordPress, or publish a suburb page above.
           </p>
         ) : (
-          <div className="max-h-[360px] overflow-auto rounded-md border border-rp-border">
-            <table className="w-full border-collapse text-left text-[11px]">
-              <thead className="sticky top-0 bg-rp-light text-[10px] font-bold uppercase text-rp-tlight">
+          <div className="max-h-[420px] overflow-auto rounded-md border border-rp-border">
+            <table className="w-full min-w-[720px] border-collapse text-left text-[11px]">
+              <thead className="sticky top-0 z-10 bg-rp-light text-[10px] font-bold uppercase text-rp-tlight shadow-[0_1px_0_0_#E5E7EB]">
                 <tr>
                   <th className="px-3 py-2">Page</th>
                   <th className="px-3 py-2">Keyword</th>

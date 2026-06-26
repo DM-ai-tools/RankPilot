@@ -212,12 +212,13 @@ def build_gbp_post_image_prompt(
     logo_bg = backdrop_for_archetype(archetype)
     has_uploaded_logo = bool(brand.get("has_logo_on_dark") or brand.get("has_logo_on_light"))
     logo_zone = (
-        "Reserve the top-left ~15% of the frame as plain empty negative space — bright white wall, "
-        "soft sky, or clean blur only. No objects, people, text, symbols, icons, or branding in this zone."
+        "Reserve the entire top 15% of the frame as plain empty negative space — bright white wall, "
+        "soft sky, or clean blur only. No objects, people, text, symbols, icons, headlines, or branding "
+        "anywhere in the top band."
         if logo_bg == "light"
         else
-        "Reserve the top-left ~15% of the frame as plain empty negative space — dark navy/charcoal "
-        "surface only. No objects, people, text, symbols, icons, or branding in this zone."
+        "Reserve the entire top 15% of the frame as plain empty negative space — dark navy/charcoal "
+        "surface only. No objects, people, text, symbols, icons, headlines, or branding in the top band."
     )
     branding_rules = (
         "- NEVER render any company name, wordmark, signage, watermark, or brand icon anywhere in the image"
