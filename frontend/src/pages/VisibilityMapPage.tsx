@@ -142,7 +142,7 @@ function MapsPackComparison({
                 {competitors.map((c) => (
                   <tr key={`${c.title}-${c.lat}`} className="border-b border-[#F0F4F8] hover:bg-[#FAFBFD]">
                     <td className="px-3 py-2">
-                      <RankBadge rank={c.pack_rank_best} />
+                      <RankBadge rank={c.pack_rank_best ?? null} />
                     </td>
                     <td className="px-3 py-2 text-[12px] font-semibold text-navy">{c.title}</td>
                     <td className="px-3 py-2 text-center text-[11px] text-rp-tmid">

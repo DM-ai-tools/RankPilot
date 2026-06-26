@@ -53,7 +53,7 @@ export function RanksPage() {
   const me = useQuery({ queryKey: ["me", token], queryFn: fetchMe, enabled: Boolean(token) });
   const ranks = useQuery({
     queryKey: ["ranks", "suburbs", "ahrefs-vol", token],
-    queryFn: fetchSuburbRanks,
+    queryFn: () => fetchSuburbRanks(),
     enabled: Boolean(token),
     staleTime: 60_000,
     refetchOnMount: "always",
@@ -71,7 +71,7 @@ export function RanksPage() {
   const kwLabel = formatPrimaryKeywordsLabel(keywordResearch.data?.primary_keyword || me.data?.primary_keyword || kw);
   const metro   = ranks.data?.metro_label || me.data?.metro_label || "";
   const radius  = me.data?.search_radius_km ?? 25;
-  const suburbs = ranks.data?.suburbs ?? [];
+  const suburbs: SuburbRank[] = ranks.data?.suburbs ?? [];
 
   const ranked     = suburbs.filter((s) => s.rank_position != null).length;
   const top3       = suburbs.filter((s) => s.rank_position != null && s.rank_position <= 3).length;

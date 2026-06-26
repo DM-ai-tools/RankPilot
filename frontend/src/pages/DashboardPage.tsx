@@ -143,7 +143,7 @@ export function DashboardPage() {
 
   const ranks = useQuery({
     queryKey: ["ranks", "suburbs", token],
-    queryFn:  fetchSuburbRanks,
+    queryFn: () => fetchSuburbRanks(),
     enabled:  Boolean(token),
     staleTime: 45_000,
     refetchInterval: isScanning ? 5_000 : false,

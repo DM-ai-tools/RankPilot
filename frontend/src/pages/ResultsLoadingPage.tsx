@@ -94,7 +94,7 @@ export function ResultsLoadingPage() {
     const warm = async () => {
       await Promise.all([
         qc.fetchQuery({ queryKey: ["dashboard", "overview", token], queryFn: fetchDashboardOverview }),
-        qc.fetchQuery({ queryKey: ["ranks", "suburbs", token], queryFn: fetchSuburbRanks }),
+        qc.fetchQuery({ queryKey: ["ranks", "suburbs", token], queryFn: () => fetchSuburbRanks() }),
         qc.fetchQuery({ queryKey: ["opportunities", token], queryFn: fetchOpportunities }),
         qc.fetchQuery({ queryKey: ["content-queue", token], queryFn: fetchContentQueue }),
         qc.fetchQuery({ queryKey: ["citations", token], queryFn: fetchCitations }),
