@@ -962,6 +962,44 @@ def _rank_note(
     return "Rank check complete — keyword not found in top positions yet"
 
 
+async def _gbp_publish_stats_by_keyword(
+    session: AsyncSession, client_id: UUID
+) -> dict[str, dict[str, Any]]:
+    """Published GBP post count and dates per target_keyword."""
+    rows = (
+        await session.execute(
+            text(
+                """
+                SELECT
+                  LOWER(TRIM(payload->>'target_keyword')) AS kw,
+                  COUNT(*) FILTER (WHERE status = 'published')::int AS gbp_post_count,
+                  MAX(published_at) FILTER (WHERE status = 'published') AS gbp_last_published_at,
+                  MIN(published_at) FILTER (WHERE status = 'published') AS gbp_first_published_at
+                FROM rp_content_queue
+                WHERE client_id = :cid
+                  AND content_type = 'gbp_post'
+                  AND payload->>'target_keyword' IS NOT NULL
+                  AND LENGTH(TRIM(payload->>'target_keyword')) > 0
+                GROUP BY 1
+                HAVING COUNT(*) FILTER (WHERE status = 'published') > 0
+                """
+            ),
+            {"cid": str(client_id)},
+        )
+    ).mappings().all()
+    out: dict[str, dict[str, Any]] = {}
+    for r in rows:
+        kw = str(r["kw"] or "").strip()
+        if not kw:
+            continue
+        out[kw] = {
+            "gbp_post_count": int(r["gbp_post_count"] or 0),
+            "gbp_last_published_at": r["gbp_last_published_at"],
+            "gbp_first_published_at": r["gbp_first_published_at"],
+        }
+    return out
+
+
 async def get_keyword_tracker_list(
     session: AsyncSession, client_id: UUID
 ) -> list[dict]:
@@ -1001,6 +1039,8 @@ async def get_keyword_tracker_list(
         )
     ).mappings().all()
 
+    publish_stats = await _gbp_publish_stats_by_keyword(session, client_id)
+
     out: list[dict] = []
     for r in rows:
         kw = str(r["keyword"])
@@ -1034,9 +1074,10 @@ async def get_keyword_tracker_list(
             for h in history_rows
         ]
 
-        # Position change (latest vs previous week)
+        # Position change (latest week vs previous week with data)
         org_change: int | None = None
         maps_change: int | None = None
+        weeks_tracked = len(history)
         if len(history) >= 2:
             curr_org = history[0]["organic_position"]
             prev_org = history[1]["organic_position"]
@@ -1052,6 +1093,9 @@ async def get_keyword_tracker_list(
         organic_pos = r["organic_position"]
         maps_pos = r["maps_position"]
         volume = r["search_volume"]
+        pub = publish_stats.get(kw.lower(), {})
+        last_pub = pub.get("gbp_last_published_at")
+        first_pub = pub.get("gbp_first_published_at")
         out.append(
             {
                 "keyword": kw,
@@ -1062,6 +1106,10 @@ async def get_keyword_tracker_list(
                 "search_volume": volume,
                 "organic_change": org_change,
                 "maps_change": maps_change,
+                "weeks_tracked": weeks_tracked,
+                "gbp_post_count": pub.get("gbp_post_count"),
+                "gbp_last_published_at": last_pub.isoformat() if last_pub else None,
+                "gbp_first_published_at": first_pub.isoformat() if first_pub else None,
                 "last_checked": last_checked.isoformat() if last_checked else None,
                 "rank_note": _rank_note(organic_pos, maps_pos, volume),
                 "history": history,

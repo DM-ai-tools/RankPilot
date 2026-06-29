@@ -73,7 +73,10 @@ function Sparkline({ data, color = "#6366f1" }: { data: (number | null)[]; color
 
 // ── Change badge ──────────────────────────────────────────────────────────────
 
-function ChangeBadge({ change }: { change: number | null }) {
+function ChangeBadge({ change, weeksTracked }: { change: number | null; weeksTracked?: number }) {
+  if (weeksTracked !== undefined && weeksTracked < 2) {
+    return <span className="text-xs text-indigo-600 font-medium">New</span>;
+  }
   if (change === null) return <span className="text-gray-400 text-xs">—</span>;
   if (change === 0)
     return (
@@ -195,6 +198,11 @@ export function KeywordTracker() {
           >
             <td className="px-4 py-2.5 font-medium text-gray-900 max-w-[220px]">
               <span className="truncate block">{kw.keyword}</span>
+              {isPublished && gbpPostMeta(kw) ? (
+                <span className="mt-0.5 block text-[10px] font-normal leading-snug text-emerald-700">
+                  {gbpPostMeta(kw)}
+                </span>
+              ) : null}
               {kw.rank_note && (
                 <span className="mt-0.5 block text-[10px] font-normal leading-snug text-amber-700">
                   {kw.rank_note}
@@ -208,7 +216,7 @@ export function KeywordTracker() {
               />
             </td>
             <td className="px-4 py-2.5 text-center">
-              <ChangeBadge change={kw.organic_change} />
+              <ChangeBadge change={kw.organic_change} weeksTracked={kw.weeks_tracked} />
             </td>
             <td className="px-4 py-2.5 text-center">
               <RankCell
@@ -217,7 +225,7 @@ export function KeywordTracker() {
               />
             </td>
             <td className="px-4 py-2.5 text-center">
-              <ChangeBadge change={kw.maps_change} />
+              <ChangeBadge change={kw.maps_change} weeksTracked={kw.weeks_tracked} />
             </td>
             <td className="px-4 py-2.5 text-center text-gray-600">
               {kw.search_volume != null
@@ -268,7 +276,9 @@ export function KeywordTracker() {
                         <tbody>
                           {kw.history.map((h) => (
                             <tr key={h.week} className="border-t border-indigo-100">
-                              <td className="py-0.5 text-gray-500">{h.week}</td>
+                              <td className="py-0.5 text-gray-500">
+                                {formatShortDate(h.week) ?? h.week}
+                              </td>
                               <td className="py-0.5 text-center">
                                 <RankCell pos={h.organic_position} />
                               </td>
@@ -338,6 +348,28 @@ export function KeywordTracker() {
     if (hrs < 24) return `${hrs}h ago`;
     const days = Math.round(hrs / 24);
     return `${days}d ago`;
+  };
+
+  const formatShortDate = (iso: string | null | undefined) => {
+    if (!iso) return null;
+    try {
+      return new Date(iso).toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" });
+    } catch {
+      return null;
+    }
+  };
+
+  const gbpPostMeta = (kw: TrackedKeyword) => {
+    const n = kw.gbp_post_count ?? 0;
+    if (n < 1) return null;
+    const last = formatShortDate(kw.gbp_last_published_at);
+    const first = formatShortDate(kw.gbp_first_published_at);
+    if (n === 1 && last) return `1 GBP post · published ${last}`;
+    if (last && first && last !== first) {
+      return `${n} GBP posts · first ${first} · latest ${last}`;
+    }
+    if (last) return `${n} GBP posts · latest ${last}`;
+    return `${n} GBP posts`;
   };
 
   return (
@@ -449,8 +481,14 @@ export function KeywordTracker() {
         <div className="space-y-4">
           {publishedKeywords.length > 0 && (
             <div className="rounded-xl border border-emerald-200">
-              <div className="border-b border-emerald-200 bg-emerald-50 px-4 py-2 text-xs font-semibold uppercase tracking-wide text-emerald-800">
-                Published GBP keywords ({publishedKeywords.length})
+              <div className="border-b border-emerald-200 bg-emerald-50 px-4 py-2 text-xs text-emerald-800">
+                <span className="font-semibold uppercase tracking-wide">
+                  Published GBP keywords ({publishedKeywords.length})
+                </span>
+                <span className="mt-0.5 block font-normal normal-case text-emerald-700/90">
+                  One row per keyword — multiple posts with the same keyword share rank tracking.
+                  Click a row for weekly history.
+                </span>
               </div>
               <div className="max-h-[420px] overflow-y-auto overflow-x-auto pr-1">
                 <table className="min-w-[1100px] w-full text-sm">

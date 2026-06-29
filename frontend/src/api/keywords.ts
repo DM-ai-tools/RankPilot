@@ -179,6 +179,10 @@ export type TrackedKeyword = {
   search_volume: number | null;
   organic_change: number | null;
   maps_change: number | null;
+  weeks_tracked?: number;
+  gbp_post_count?: number | null;
+  gbp_last_published_at?: string | null;
+  gbp_first_published_at?: string | null;
   last_checked: string | null;
   rank_note: string | null;
   history: KeywordRankHistoryPoint[];
