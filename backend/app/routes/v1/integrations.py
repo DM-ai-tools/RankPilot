@@ -120,7 +120,7 @@ def _gbp_media_error_detail(message: str, *, context: str) -> str:
         return (
             f"{context}: {raw} "
             "Google could not read the uploaded bytes (common in local dev). "
-            "AI-generated photos: delete and re-generate, then Publish (uses Runway's public URL). "
+            "AI-generated photos: delete and re-generate, then Publish (served from RankPilot storage). "
             "Uploaded files: enable **Google My Business API** in Cloud Console, or run "
             "`ngrok http 8000` and set PUBLIC_API_BASE_URL to the https URL in backend/.env."
         )
@@ -2482,10 +2482,10 @@ async def generate_suburb_page(
             role = roles[idx] if idx < len(roles) else f"image-{idx + 1}"
             images.append(SuburbPageImage(role=role, photo_id=pid))
     elif image_count > 0:
-        runway_ready = bool((settings.runwayml_api_key or "").strip())
-        if not runway_ready:
+        openai_ready = bool((settings.openai_api_key or "").strip())
+        if not openai_ready:
             images.append(
-                SuburbPageImage(role="hero", note="No image — set RUNWAYML_API_KEY for AI images.")
+                SuburbPageImage(role="hero", note="No image — set OPENAI_API_KEY for AI images (gpt-image-2).")
             )
         else:
             from app.services.gbp_photos_service import (  # noqa: PLC0415
@@ -2534,7 +2534,7 @@ async def generate_suburb_page(
                     if img.get("archetype"):
                         prior.append(str(img["archetype"]))
                 else:
-                    note = img_err or "Image generation skipped (check RUNWAYML_API_KEY and Runway credits)."
+                    note = img_err or "Image generation skipped (check OPENAI_API_KEY and OpenAI billing)."
                     images.append(SuburbPageImage(role=role, note=note))
 
     photo_ids = [img.photo_id for img in images if img.photo_id]

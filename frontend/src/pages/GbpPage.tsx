@@ -579,7 +579,7 @@ function PostsTab({
       <Card>
         <CardHeader
           title="Generate post directions"
-          subtitle="OpenRouter writes deep Runway image briefs + post angles from your Ahrefs keywords"
+          subtitle="OpenRouter writes deep image briefs + post angles from your Ahrefs keywords"
         />
         <div className="p-4 space-y-4">
           <div className="flex items-center gap-3">
@@ -608,7 +608,7 @@ function PostsTab({
             <div className="rounded-lg border border-dashed border-[#C2E0FF] bg-[#F8FAFC] p-4">
               <p className="text-[11px] text-navy">
                 Select Ahrefs keywords on the right, type your own keywords manually, choose how many prompts you
-                need, then generate. Each prompt is a detailed persuasive image brief (150+ words) for Runway — not
+                need, then generate. Each prompt is a detailed persuasive image brief (150+ words) for OpenAI gpt-image-2 — not
                 a one-liner.
               </p>
               {selectedPromptKws.length > 0 ? (
@@ -834,7 +834,7 @@ function PostsTab({
               ))}
               </div>
               <p className="text-[10px] text-rp-tlight">
-                Use Generate post directions above for deep Runway prompts, or click a keyword on the right to add manually.
+                Use Generate post directions above for deep image prompts, or click a keyword on the right to add manually.
               </p>
             </div>
 
@@ -939,7 +939,7 @@ function PostsTab({
                 {photoUrl && (
                   <div className="mb-3">
                     <p className="mb-1 text-[10px] font-semibold text-[#8EA3BC] uppercase tracking-wide">
-                      Post image (Runway)
+                      Post image (OpenAI)
                     </p>
                     <img
                       src={photoUrl}
@@ -2035,7 +2035,7 @@ function PhotosTab({ d, token }: { d: GbpOverview; token: string | null }) {
     <div className="space-y-4">
       <ImagePreviewModal preview={preview} onClose={() => setPreview(null)} />
       <Card>
-        <CardHeader title="Generate photo" subtitle="AI-generated via Runway — describe the scene" />
+        <CardHeader title="Generate photo" subtitle="AI-generated via OpenAI gpt-image-2 — describe the scene" />
         <div className="p-4 space-y-3">
           <textarea
             rows={3}

@@ -314,7 +314,7 @@ async def load_recent_image_history(session: AsyncSession, client_id: str, *, li
                 """
                 SELECT prompt FROM rp_gbp_photos
                 WHERE client_id = :cid
-                  AND source IN ('gbp_post', 'runway', 'suburb_page')
+                  AND source IN ('gbp_post', 'runway', 'openai', 'suburb_page')
                   AND prompt IS NOT NULL
                 ORDER BY created_at DESC
                 LIMIT :lim

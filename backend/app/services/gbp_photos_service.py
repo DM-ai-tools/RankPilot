@@ -1,4 +1,4 @@
-"""GBP photo library — upload files and generate via Runway (Nano Banana / Gemini image)."""
+"""GBP photo library — upload files and generate via OpenAI gpt-image-2."""
 
 from __future__ import annotations
 
@@ -28,8 +28,11 @@ from app.services.gbp_image_prompt_service import (
     build_runway_prompt_for_suburb_landing,
     encode_prompt_meta,
 )
-from app.services.runway_service import RUNWAY_RATIO_GBP, RUNWAY_RATIO_WEBSITE, RunwayService
-
+from app.services.openai_image_service import (
+    OPENAI_SIZE_GBP,
+    OPENAI_SIZE_WEBSITE,
+    OpenAIImageService,
+)
 logger = logging.getLogger(__name__)
 
 BI_BASE = "https://mybusinessbusinessinformation.googleapis.com/v1"
@@ -122,10 +125,21 @@ def _public_api_base(settings: Settings | None = None) -> str:
     return base
 
 
+def _is_ngrok_free_host(url: str) -> bool:
+    """Free ngrok hosts inject an HTML interstitial Google cannot skip."""
+    low = (url or "").strip().lower()
+    return "ngrok-free." in low or ".ngrok.io" in low or "ngrok-free.dev" in low
+
+
 def _google_can_fetch_publish_url(settings: Settings | None = None) -> bool:
-    """True when sourceUrl is on the public internet (not localhost)."""
+    """True when sourceUrl is on the public internet (not localhost / free ngrok)."""
     low = _public_api_base(settings).lower()
-    return "localhost" not in low and "127.0.0.1" not in low
+    if "localhost" in low or "127.0.0.1" in low:
+        return False
+    # Free ngrok interstitial returns HTML to Google → "Internal error encountered".
+    if _is_ngrok_free_host(low):
+        return False
+    return low.startswith("https://")
 
 
 def _slot_category(slot_label: str | None) -> str:
@@ -287,7 +301,7 @@ async def _get_photo_row(
         await session.execute(
             text(
                 """
-                SELECT storage_path, external_source_url, status
+                SELECT storage_path, external_source_url, status, image_data
                 FROM rp_gbp_photos
                 WHERE id = :id AND client_id = :cid
                   AND status IN ('ready', 'published')
@@ -302,13 +316,25 @@ async def _get_photo_row(
 
 
 async def _materialize_photo_path(row: dict) -> Path:
-    """Return on-disk photo path, re-downloading from Runway/CDN when the local copy is gone."""
+    """Return on-disk photo path, restoring from DB bytes or CDN when missing."""
     path = Path(str(row["storage_path"]))
     if path.is_file():
         cached = _gbp_publish_cache_path(path)
         if cached.is_file():
             return cached
         return path
+
+    # Restore from DB blob (OpenAI images often live here after Railway/ephemeral disk).
+    img_bytes = row.get("image_data")
+    if img_bytes:
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(bytes(img_bytes))
+            if path.is_file():
+                return path
+        except Exception:
+            logger.warning("Could not restore GBP photo from image_data", exc_info=True)
+
     ext = str(row.get("external_source_url") or "").strip()
     if ext.startswith("http://") or ext.startswith("https://"):
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -322,6 +348,91 @@ async def _materialize_photo_path(row: dict) -> Path:
         except Exception:
             logger.warning("Could not re-download GBP photo from %s", ext, exc_info=True)
     raise HTTPException(status_code=404, detail="Photo file missing on server")
+
+
+async def _persist_external_source_url(
+    session: AsyncSession,
+    client_id: UUID | str,
+    photo_id: str,
+    url: str,
+) -> None:
+    u = (url or "").strip()
+    if not u:
+        return
+    await session.execute(
+        text(
+            """
+            UPDATE rp_gbp_photos
+            SET external_source_url = :url
+            WHERE id = :id AND client_id = :cid
+            """
+        ),
+        {"url": u, "id": photo_id, "cid": str(client_id)},
+    )
+    await session.flush()
+
+
+async def resolve_post_image_source_url(
+    session: AsyncSession,
+    client_id: UUID,
+    photo_id: str,
+    *,
+    prefer_cdn: bool = False,
+) -> str | None:
+    """Public HTTPS URL Google can fetch for a GBP post image.
+
+    Priority:
+    1. Durable CDN URL already stored on the photo row
+    2. Upload to a public CDN (always when prefer_cdn, localhost, or free ngrok)
+    3. Signed PUBLIC_API_BASE_URL only when Google can actually fetch it (not ngrok-free)
+    """
+    photo_id = str(photo_id or "").strip()
+    if not photo_id:
+        return None
+
+    settings = get_settings()
+    try:
+        row = await _get_photo_row(session, client_id, photo_id)
+    except HTTPException:
+        return None
+    ext_url = str(row.get("external_source_url") or "").strip()
+
+    # 1. Prefer a durable public CDN URL (never tmpfiles / never free-ngrok hosts).
+    if (
+        _is_public_https_url(ext_url)
+        and "tmpfiles.org" not in ext_url
+        and not _is_ngrok_free_host(ext_url)
+    ):
+        return ext_url
+
+    force_cdn = prefer_cdn or not _google_can_fetch_publish_url(settings)
+
+    # 2. Host on a public CDN Google can fetch without interstitial pages.
+    if force_cdn or prefer_cdn or not ext_url:
+        try:
+            materialized = await _materialize_photo_path(row)
+            cdn_url = await _host_image_publicly(materialized)
+            if cdn_url:
+                await _persist_external_source_url(session, client_id, photo_id, cdn_url)
+                return cdn_url
+        except HTTPException as exc:
+            logger.warning("Post image CDN host failed for %s: %s", photo_id, exc.detail)
+            if prefer_cdn:
+                return None
+        except Exception:
+            logger.warning("Post image CDN host failed for %s", photo_id, exc_info=True)
+            if prefer_cdn:
+                return None
+
+    # 3. Signed API URL — only when PUBLIC_API_BASE_URL is truly Google-reachable.
+    if _google_can_fetch_publish_url(settings):
+        try:
+            await _materialize_photo_path(row)
+            return build_photo_publish_source_url(photo_id, client_id, settings)
+        except HTTPException:
+            pass
+
+    return None
 
 
 async def resolve_publish_source_file(
@@ -340,59 +451,6 @@ async def resolve_publish_source_file(
     )
     row = await _get_photo_row(session, client_id, photo_id)
     return await _materialize_photo_path(row)
-
-
-async def resolve_post_image_source_url(
-    session: AsyncSession,
-    client_id: UUID,
-    photo_id: str,
-    *,
-    prefer_cdn: bool = False,
-) -> str | None:
-    """Public HTTPS URL Google can fetch for a GBP post image.
-
-    Priority order:
-    1. ext_url (Runway/CDN) — works on Railway ephemeral disk with no extra setup
-    2. Signed API URL via PUBLIC_API_BASE_URL — only when file is confirmed on disk
-    3. Re-download + CDN upload as last resort
-    """
-    photo_id = str(photo_id or "").strip()
-    if not photo_id:
-        return None
-
-    settings = get_settings()
-    try:
-        row = await _get_photo_row(session, client_id, photo_id)
-    except HTTPException:
-        return None
-    ext_url = str(row.get("external_source_url") or "").strip()
-    local_path = Path(str(row["storage_path"]))
-
-    # 1. Use external CDN/Runway URL if it's a valid public HTTPS URL.
-    #    Skip tmpfiles.org — those expire in 1 hour and will cause broken images.
-    #    Runway URLs last ~24 h; imgbb/freeimage are permanent.
-    if _is_public_https_url(ext_url) and "tmpfiles.org" not in ext_url:
-        return ext_url
-
-    # 2. Signed API URL — only when the file actually exists on this instance's disk.
-    if _google_can_fetch_publish_url(settings) and local_path.is_file():
-        return build_photo_publish_source_url(photo_id, client_id, settings)
-
-    # 3. Try to materialise (re-download if Runway URL works) then serve via signed URL.
-    if _google_can_fetch_publish_url(settings):
-        try:
-            await _materialize_photo_path(row)  # re-downloads Runway URL to disk
-            return build_photo_publish_source_url(photo_id, client_id, settings)
-        except HTTPException:
-            pass
-
-    # 4. Last resort: upload to a public temp CDN so Google can fetch it.
-    try:
-        materialized = await _materialize_photo_path(row)
-        return await _dev_public_url_for_local_file(materialized)
-    except HTTPException as exc:
-        logger.warning("Post image host failed for %s: %s", photo_id, exc.detail)
-        return None
 
 
 async def resolve_photo_file(
@@ -523,29 +581,24 @@ async def generate_gbp_photo(
         post_index=1,
     )
 
-    runway = RunwayService()
+    image_svc = OpenAIImageService()
     try:
-        result = await runway.text_to_image(runway_prompt, ratio=RUNWAY_RATIO_GBP)
+        result = await image_svc.text_to_image(runway_prompt, size=OPENAI_SIZE_GBP)
     except ValueError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     except TimeoutError as exc:
         raise HTTPException(status_code=504, detail=str(exc)) from exc
     except Exception as exc:
-        logger.exception("Runway generate failed")
+        logger.exception("OpenAI image generate failed")
         raise HTTPException(status_code=502, detail=f"Image generation failed: {exc!s}") from exc
 
-    urls = result.get("output_urls") or []
-    if not urls:
-        raise HTTPException(status_code=502, detail="Runway returned no image URL")
+    image_bytes_raw = result.get("image_bytes")
+    if not image_bytes_raw:
+        raise HTTPException(status_code=502, detail="OpenAI returned no image bytes")
 
     photo_id = str(uuid7())
     dest = _client_dir(client_id) / f"{photo_id}.png"
-
-    async with httpx.AsyncClient(timeout=60.0, follow_redirects=True) as http:
-        img = await http.get(urls[0])
-        if not img.is_success:
-            raise HTTPException(status_code=502, detail="Failed to download generated image from Runway")
-        dest.write_bytes(img.content)
+    dest.write_bytes(image_bytes_raw)
 
     await apply_brand_kit_to_image(
         session,
@@ -554,7 +607,13 @@ async def generate_gbp_photo(
         preferred_background=meta.get("logo_background"),
     )
 
-    runway_url = str(urls[0]).strip()
+    cdn_url: str | None = None
+    if dest.is_file():
+        try:
+            cdn_url = await _host_image_publicly(dest)
+        except Exception:
+            logger.warning("Could not upload generated photo to public CDN", exc_info=True)
+
     img_bytes: bytes | None = dest.read_bytes() if dest.is_file() else None
     await session.execute(
         text(
@@ -563,7 +622,7 @@ async def generate_gbp_photo(
                 (id, client_id, source, prompt, storage_path, runway_task_id, slot_label, status,
                  external_source_url, image_data)
             VALUES
-                (:id, :cid, 'runway', :prompt, :path, :task, :label, 'ready', :ext_url, :img)
+                (:id, :cid, 'openai', :prompt, :path, :task, :label, 'ready', :ext_url, :img)
             """
         ),
         {
@@ -573,13 +632,13 @@ async def generate_gbp_photo(
             "path": str(dest),
             "task": result.get("task_id"),
             "label": (slot_label or "").strip() or None,
-            "ext_url": runway_url or None,
+            "ext_url": cdn_url,
             "img": img_bytes,
         },
     )
     return {
         "id": photo_id,
-        "source": "runway",
+        "source": "openai",
         "model": result.get("model"),
         "prompt": user_prompt,
         "url": _photo_public_path(photo_id),
@@ -602,9 +661,9 @@ async def generate_post_image_from_content(
     search_volume: int | None = None,
     keyword_difficulty: int | None = None,
 ) -> dict | None:
-    """Generate a Runway image for a GBP post; returns {photo_id, url, archetype} or None."""
-    runway = RunwayService()
-    if not runway.configured():
+    """Generate an OpenAI gpt-image-2 image for a GBP post; returns {photo_id, url, archetype} or None."""
+    image_svc = OpenAIImageService()
+    if not image_svc.configured():
         return None
 
     await _ensure_photos_table(session)
@@ -631,25 +690,21 @@ async def generate_post_image_from_content(
     )
 
     try:
-        result = await runway.text_to_image(runway_prompt, ratio=RUNWAY_RATIO_GBP)
+        result = await image_svc.text_to_image(runway_prompt, size=OPENAI_SIZE_GBP)
     except Exception as exc:
         logger.warning("Post image generation skipped: %s", exc)
         return None
 
-    urls = result.get("output_urls") or []
-    if not urls:
+    image_bytes_raw = result.get("image_bytes")
+    if not image_bytes_raw:
         return None
 
     photo_id = str(uuid7())
     dest = _client_dir(client_id) / f"{photo_id}.png"
     try:
-        async with httpx.AsyncClient(timeout=60.0, follow_redirects=True) as http:
-            img = await http.get(urls[0])
-            if not img.is_success:
-                return None
-            dest.write_bytes(img.content)
+        dest.write_bytes(image_bytes_raw)
     except Exception:
-        logger.warning("Post image download failed", exc_info=True)
+        logger.warning("Post image write failed", exc_info=True)
         return None
 
     await apply_brand_kit_to_image(
@@ -659,29 +714,15 @@ async def generate_post_image_from_content(
         preferred_background=meta.get("logo_background"),
     )
 
-    runway_url = str(urls[0]).strip()
-
-    # If a permanent CDN key is configured, upload now so the URL never expires.
-    # Do NOT use tmpfiles here — it expires in 1 hour and would break previews.
-    # Runway URLs last ~24 h which is enough for same-day publishes without a key.
+    # Always host on a public CDN — Google cannot fetch free-ngrok / localhost URLs.
     cdn_url: str | None = None
-    s = get_settings()
-    _freeimage_key = (s.freeimage_api_key or "").strip()
-    _imgbb_key = (s.imgbb_api_key or "").strip()
-    if dest.is_file() and (_freeimage_key or _imgbb_key):
+    if dest.is_file():
         try:
-            data = dest.read_bytes()
-            async with httpx.AsyncClient(timeout=60.0, follow_redirects=True) as _http:
-                if _freeimage_key:
-                    cdn_url = await _upload_freeimage(_http, data, _freeimage_key)
-                if not cdn_url and _imgbb_key:
-                    cdn_url = await _upload_imgbb(_http, data, _imgbb_key)
+            cdn_url = await _host_image_publicly(dest)
         except Exception:
-            logger.warning("Could not upload post image to permanent CDN", exc_info=True)
+            logger.warning("Could not upload post image to public CDN", exc_info=True)
 
-    # Prefer permanent CDN URL, fall back to Runway URL (~24 h expiry).
-    # Never store tmpfiles URLs — they expire in 1 hour.
-    ext_url_to_store = cdn_url or runway_url or None
+    ext_url_to_store = cdn_url or None
 
     # Store branded image bytes in DB — survives Railway restarts and multi-instance deploys.
     img_bytes: bytes | None = None
@@ -749,9 +790,9 @@ async def generate_suburb_landing_image(
     prior_archetypes: list[str] | None = None,
     recent_photo_ids: list[str] | None = None,
 ) -> dict | None:
-    """Generate a text-free Runway image for suburb landing pages."""
-    runway = RunwayService()
-    if not runway.configured():
+    """Generate a text-free OpenAI gpt-image-2 image for suburb landing pages."""
+    image_svc = OpenAIImageService()
+    if not image_svc.configured():
         return None
 
     await _ensure_photos_table(session)
@@ -780,25 +821,21 @@ async def generate_suburb_landing_image(
     )
 
     try:
-        result = await runway.text_to_image(runway_prompt, ratio=RUNWAY_RATIO_WEBSITE)
+        result = await image_svc.text_to_image(runway_prompt, size=OPENAI_SIZE_WEBSITE)
     except Exception as exc:
         logger.warning("Suburb landing image generation skipped: %s", exc)
         return None
 
-    urls = result.get("output_urls") or []
-    if not urls:
+    image_bytes_raw = result.get("image_bytes")
+    if not image_bytes_raw:
         return None
 
     photo_id = str(uuid7())
     dest = _client_dir(client_id) / f"{photo_id}.png"
     try:
-        async with httpx.AsyncClient(timeout=60.0, follow_redirects=True) as http:
-            img = await http.get(urls[0])
-            if not img.is_success:
-                return None
-            dest.write_bytes(img.content)
+        dest.write_bytes(image_bytes_raw)
     except Exception:
-        logger.warning("Suburb landing image download failed", exc_info=True)
+        logger.warning("Suburb landing image write failed", exc_info=True)
         return None
 
     _prepare_website_landscape_image(dest)
@@ -807,7 +844,6 @@ async def generate_suburb_landing_image(
     # brand logo overlay — the plain photo alone is enough. Logo overlays are
     # applied only to GBP photos/posts (see generate_gbp_photo).
 
-    runway_url = str(urls[0]).strip()
     cdn_url: str | None = None
     s = get_settings()
     _freeimage_key = (s.freeimage_api_key or "").strip()
@@ -823,7 +859,7 @@ async def generate_suburb_landing_image(
         except Exception:
             logger.warning("Could not upload suburb image to permanent CDN", exc_info=True)
 
-    ext_url_to_store = cdn_url or runway_url or None
+    ext_url_to_store = cdn_url or None
     img_bytes: bytes | None = None
     if dest.is_file():
         try:
@@ -971,7 +1007,15 @@ async def _verify_public_image_url(http: httpx.AsyncClient, url: str) -> bool:
         head = await http.head(url, follow_redirects=True)
         if head.is_success:
             ctype = (head.headers.get("content-type") or "").lower()
-            return ctype.startswith("image/")
+            if ctype.startswith("image/") or not ctype:
+                return True
+        # Some hosts block HEAD — try a tiny GET.
+        get = await http.get(url, headers={"Range": "bytes=0-1023"}, follow_redirects=True)
+        if get.is_success or get.status_code == 206:
+            ctype = (get.headers.get("content-type") or "").lower()
+            body = get.content or b""
+            if ctype.startswith("image/") or body[:3] == b"\xff\xd8\xff" or body[:8] == b"\x89PNG\r\n\x1a\n":
+                return True
     except Exception:
         pass
     return False
@@ -1037,31 +1081,87 @@ async def _upload_imgbb(http: httpx.AsyncClient, data: bytes, api_key: str) -> s
     return None
 
 
-async def _dev_public_url_for_local_file(file_path: Path) -> str:
-    """Localhost dev: host file at a public HTTPS image URL so Google sourceUrl works."""
+async def _upload_catbox(http: httpx.AsyncClient, data: bytes, filename: str, mime: str) -> str | None:
+    """Keyless durable host — Google can fetch files.catbox.moe directly."""
+    try:
+        resp = await http.post(
+            "https://catbox.moe/user/api.php",
+            data={"reqtype": "fileupload"},
+            files={"fileToUpload": (filename, data, mime)},
+            headers={"User-Agent": "RankPilot/1.0"},
+        )
+    except Exception:
+        logger.warning("catbox upload failed", exc_info=True)
+        return None
+    if not resp.is_success:
+        logger.warning("catbox upload HTTP %s: %s", resp.status_code, resp.text[:200])
+        return None
+    url = (resp.text or "").strip()
+    if _is_public_https_url(url) and "catbox.moe" in url.lower():
+        if await _verify_public_image_url(http, url):
+            return url
+        # Catbox often works even when HEAD is blocked.
+        return url
+    return None
+
+
+def _jpeg_bytes_for_google(file_path: Path) -> tuple[bytes, str, str]:
+    """Return (bytes, filename, mime). Prefer JPEG — GBP posts are more reliable with it."""
+    raw = file_path.read_bytes()
+    name = file_path.stem or "gbp-post"
+    try:
+        from PIL import Image
+        import io
+
+        with Image.open(file_path) as im:
+            rgb = im.convert("RGB")
+            buf = io.BytesIO()
+            rgb.save(buf, format="JPEG", quality=90, optimize=True)
+            data = buf.getvalue()
+            if len(data) >= _MIN_PHOTO_BYTES:
+                return data, f"{name}.jpg", "image/jpeg"
+    except Exception:
+        logger.warning("JPEG convert failed for %s; uploading original", file_path, exc_info=True)
+    return raw, file_path.name or f"{name}.png", _mime_for_path(file_path)
+
+
+async def _host_image_publicly(file_path: Path) -> str | None:
+    """Upload image to a public HTTPS host Google can fetch (no ngrok interstitial)."""
     settings = get_settings()
-    mime = _mime_for_path(file_path)
-    data = file_path.read_bytes()
+    data, filename, mime = _jpeg_bytes_for_google(file_path)
     freeimage_key = (settings.freeimage_api_key or "").strip()
     imgbb_key = (settings.imgbb_api_key or "").strip()
 
     async with httpx.AsyncClient(timeout=90.0, follow_redirects=True) as http:
-        url = await _upload_tmpfiles(http, file_path, data, mime)
-        if url:
-            return url
-        url = await _upload_freeimage(http, data, freeimage_key)
-        if url:
-            return url
-        url = await _upload_imgbb(http, data, imgbb_key)
-        if url:
-            return url
+        attempts = (
+            ("freeimage", lambda: _upload_freeimage(http, data, freeimage_key)),
+            ("imgbb", lambda: _upload_imgbb(http, data, imgbb_key)),
+            ("catbox", lambda: _upload_catbox(http, data, filename, mime)),
+            ("tmpfiles", lambda: _upload_tmpfiles(http, Path(filename), data, mime)),
+        )
+        for label, factory in attempts:
+            try:
+                url = await factory()
+            except Exception:
+                logger.warning("Image host %s failed", label, exc_info=True)
+                continue
+            if url:
+                logger.info("Hosted GBP post image via %s → %s", label, url[:120])
+                return url
+    return None
 
+
+async def _dev_public_url_for_local_file(file_path: Path) -> str:
+    """Localhost/ngrok-free: host file at a public HTTPS image URL so Google sourceUrl works."""
+    url = await _host_image_publicly(file_path)
+    if url:
+        return url
     raise HTTPException(
         status_code=502,
         detail=(
-            "Could not host your photo for Google on localhost. Add FREEIMAGE_API_KEY or IMGBB_API_KEY "
-            "(free at freeimage.host / imgbb.com) to backend/.env, or set PUBLIC_API_BASE_URL to your "
-            "public API URL (e.g. Railway + ngrok)."
+            "Could not host your photo for Google. Free ngrok blocks Google's image fetch. "
+            "Add FREEIMAGE_API_KEY or IMGBB_API_KEY (free) to backend/.env, or deploy the API "
+            "on Railway with a real PUBLIC_API_BASE_URL (not ngrok-free)."
         ),
     )
 

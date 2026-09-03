@@ -283,7 +283,8 @@ export function VisibilityMapPage() {
       : typeof scanJob?.payload?.radius_km === "string"
         ? Number(scanJob.payload.radius_km) || null
         : null;
-  const displayRadiusKm = activeScanRadiusKm ?? profileRadiusKm;
+  const apiRadiusKm = d?.search_radius_km ?? null;
+  const displayRadiusKm = activeScanRadiusKm ?? apiRadiusKm ?? profileRadiusKm;
 
   const radiusLabel = displayRadiusKm
     ? displayRadiusKm <= 5
@@ -302,17 +303,16 @@ export function VisibilityMapPage() {
     : null;
 
   const gridSuburbCount = d?.suburbs.length ?? 0;
+  const fullGridCount = d?.grid_suburb_total ?? gridSuburbCount;
   const scanSuburbTotal = scanProgress?.suburbs_total ?? null;
   const suburbScopeLabel =
-    isScanning && scanSuburbTotal != null && activeScanRadiusKm != null
-      ? `${scanSuburbTotal} suburbs in ${activeScanRadiusKm} km scan`
-      : gridSuburbCount > 0 && profileRadiusKm != null && profileRadiusKm > 30
-        ? `${gridSuburbCount} suburbs in grid (${profileRadiusKm} km setup)`
-        : gridSuburbCount > 0 && displayRadiusKm != null
-          ? `${gridSuburbCount} suburbs · ${displayRadiusKm} km radius`
-          : gridSuburbCount > 0
-            ? `${gridSuburbCount} suburbs tracked`
-            : "";
+    isScanning && scanSuburbTotal != null && displayRadiusKm != null
+      ? `${scanSuburbTotal} suburbs in ${displayRadiusKm} km scan`
+      : gridSuburbCount > 0 && displayRadiusKm != null
+        ? `${gridSuburbCount} suburbs · ${displayRadiusKm} km radius`
+        : gridSuburbCount > 0
+          ? `${gridSuburbCount} suburbs tracked`
+          : "";
 
   const mapScore = d?.suburbs?.length
     ? visibilityScoreFromSuburbs(d.suburbs)
@@ -382,9 +382,9 @@ export function VisibilityMapPage() {
                   </div>
                   <p className="mt-1 text-[11px] text-[#0050A0]/80">
                     Map refreshes every few seconds. This scan uses a{" "}
-                    <strong>{activeScanRadiusKm ?? 25} km</strong> radius
-                    {gridSuburbCount > (scanProgress?.suburbs_total ?? 0)
-                      ? ` (${scanProgress?.suburbs_total ?? 0} suburbs scanned · ${gridSuburbCount} in your full grid)`
+                    <strong>{displayRadiusKm ?? 25} km</strong> radius
+                    {fullGridCount > gridSuburbCount
+                      ? ` (${gridSuburbCount} suburbs in radius · ${fullGridCount} in full grid)`
                       : ""}
                     .
                   </p>

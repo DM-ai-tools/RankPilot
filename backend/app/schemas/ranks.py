@@ -60,3 +60,11 @@ class SuburbRanksResponse(BaseModel):
         default="none",
         description="Source of monthly_volume_proxy on keyword pages: ahrefs | none | ahrefs_error",
     )
+    search_radius_km: int = Field(
+        default=25,
+        description="Active radius used to filter suburbs on the map (profile or latest scan)",
+    )
+    grid_suburb_total: int = Field(
+        default=0,
+        description="Total suburbs in client grid before radius filter",
+    )

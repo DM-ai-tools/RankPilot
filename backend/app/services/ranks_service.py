@@ -10,6 +10,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_ahrefs_api_key
+from app.data.au_suburbs import filter_suburbs_by_radius_km, filter_suburbs_from_center
 from app.lib.primary_keywords import scan_keyword_from_primary
 from app.lib.visibility_scoring import count_rank_bands, visibility_score_pct
 from app.schemas.ranks import MapPackPlace, SuburbRankRow, SuburbRanksResponse
@@ -110,6 +111,78 @@ def _dedupe_map_competitors(pins: list[MapPackPlace], limit: int = 120) -> list[
     return merged[:limit]
 
 
+def _filter_suburb_rows_by_radius(
+    rows: list,
+    *,
+    metro: str,
+    radius_km: int,
+    primary_suburb: str,
+) -> list:
+    """Keep only suburbs inside the active scan / profile radius (same rules as maps_worker)."""
+    if not rows:
+        return rows
+    rmax = max(5, min(100, int(radius_km)))
+    suburb_maps = [dict(r) for r in rows]
+    anchor = (primary_suburb or "").strip()
+    if anchor:
+        centre = next(
+            (s for s in suburb_maps if str(s.get("suburb", "")).lower() == anchor.lower()),
+            None,
+        )
+        if centre and centre.get("lat") is not None and centre.get("lng") is not None:
+            filtered = filter_suburbs_from_center(
+                suburb_maps,
+                float(centre["lat"]),
+                float(centre["lng"]),
+                rmax,
+            )
+        else:
+            filtered = filter_suburbs_by_radius_km(suburb_maps, metro, rmax)
+    else:
+        filtered = filter_suburbs_by_radius_km(suburb_maps, metro, rmax)
+
+    allowed: set[str] = set()
+    for s in filtered:
+        sid = s.get("suburb_id")
+        if sid is not None:
+            allowed.add(str(sid))
+    if not allowed:
+        return rows
+    return [r for r in rows if str(r.get("suburb_id")) in allowed]
+
+
+async def _effective_radius_km(
+    session: AsyncSession,
+    client_id: UUID,
+    keyword: str,
+    profile_radius_km: int,
+) -> int:
+    """Prefer latest maps_scan radius for this keyword; fall back to profile search_radius_km."""
+    row = (
+        await session.execute(
+            text(
+                """
+                SELECT payload->>'radius_km' AS radius_km
+                FROM rp_jobs
+                WHERE client_id = :cid
+                  AND job_type = 'maps_scan'
+                  AND status IN ('queued', 'running', 'succeeded')
+                  AND LOWER(TRIM(COALESCE(payload->>'keyword', ''))) = LOWER(TRIM(:kw))
+                ORDER BY created_at DESC
+                LIMIT 1
+                """
+            ),
+            {"cid": str(client_id), "kw": keyword},
+        )
+    ).mappings().first()
+    if row and row.get("radius_km") is not None:
+        try:
+            return max(5, min(100, int(row["radius_km"])))
+        except (TypeError, ValueError):
+            pass
+    return max(5, min(100, int(profile_radius_km or 25)))
+
+
 async def _ahrefs_volume_by_suburb(
     keyword: str,
     suburbs: list[str],
@@ -161,13 +234,20 @@ class RanksService:
         client = (
             await self._session.execute(
                 text(
-                    "SELECT primary_keyword, metro_label FROM rp_clients WHERE client_id = :cid"
+                    """
+                    SELECT primary_keyword, metro_label,
+                           COALESCE(search_radius_km, 25) AS search_radius_km,
+                           COALESCE(primary_suburb, '') AS primary_suburb
+                    FROM rp_clients WHERE client_id = :cid
+                    """
                 ),
                 {"cid": str(client_id)},
             )
         ).mappings().first()
         primary_kw = str(client["primary_keyword"] if client else "").strip()
         metro = str(client["metro_label"] if client else "")
+        profile_radius = int(client["search_radius_km"] if client else 25)
+        primary_suburb = str(client["primary_suburb"] if client else "")
 
         requested = (keyword or "").strip()
         if requested:
@@ -191,6 +271,10 @@ class RanksService:
                 str(latest_scan["keyword"] if latest_scan else "").strip()
                 or scan_keyword_from_primary(primary_kw)
             )
+
+        radius_km = await _effective_radius_km(
+            self._session, client_id, keyword, profile_radius
+        )
 
         rows = (
             await self._session.execute(
@@ -218,6 +302,14 @@ class RanksService:
                 {"kw": keyword, "cid": str(client_id)},
             )
         ).mappings().all()
+
+        grid_total = len(rows)
+        rows = _filter_suburb_rows_by_radius(
+            list(rows),
+            metro=metro,
+            radius_km=radius_km,
+            primary_suburb=primary_suburb,
+        )
 
         volume_source = "none"
         ahrefs_volumes: dict[str, int] = {}
@@ -306,4 +398,6 @@ class RanksService:
             not_ranking_count=notr,
             map_competitors=map_competitors,
             volume_source=volume_source,
+            search_radius_km=radius_km,
+            grid_suburb_total=grid_total,
         )

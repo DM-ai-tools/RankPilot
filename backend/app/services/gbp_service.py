@@ -1579,10 +1579,10 @@ async def _generate_one_gbp_post(
         photo_id = img.get("photo_id")
         photo_url = img.get("url")
         image_note = (
-            f"AI image generated for this post (Runway, {img.get('archetype', 'creative')} style)."
+            f"AI image generated for this post (OpenAI gpt-image-2, {img.get('archetype', 'creative')} style)."
         )
-    elif not (settings.runwayml_api_key or "").strip():
-        image_note = "No post image — set RUNWAYML_API_KEY to auto-generate photos with posts."
+    elif not (settings.openai_api_key or "").strip():
+        image_note = "No post image — set OPENAI_API_KEY to auto-generate photos with posts (gpt-image-2)."
     else:
         image_note = "Post text created; image generation failed or was skipped."
 
@@ -2515,8 +2515,9 @@ async def publish_gbp_queue_post(
     )
     if photo_id and not media_url:
         note = (
-            "Published (text only). Image not sent — photo missing or could not be hosted for Google. "
-            "Add FREEIMAGE_API_KEY or IMGBB_API_KEY to backend/.env, or set PUBLIC_API_BASE_URL."
+            "Published (text only). Image not sent — could not host a public image URL for Google. "
+            "Free ngrok blocks Google's image fetch. Add FREEIMAGE_API_KEY or IMGBB_API_KEY, "
+            "or use Railway PUBLIC_API_BASE_URL (not ngrok-free)."
         )
 
     v4_parent = await _resolve_v4_media_parent(token, intg["location_name"])
@@ -2544,7 +2545,8 @@ async def publish_gbp_queue_post(
                     )
                     note = (
                         "Published to Google (text only). Image was skipped — Google could not fetch the photo. "
-                        "Check FREEIMAGE_API_KEY / PUBLIC_API_BASE_URL in backend/.env."
+                        "Free ngrok is blocked by Google; RankPilot now uploads to a public CDN automatically — "
+                        "re-generate the post image and publish again."
                     )
             else:
                 logger.warning("GBP post with image failed (%s), retrying text-only", exc.detail)
@@ -2553,7 +2555,7 @@ async def publish_gbp_queue_post(
                 )
                 note = (
                     "Published to Google (text only). Image was skipped — Google could not fetch the photo URL. "
-                    "Set PUBLIC_API_BASE_URL to a live https tunnel, or add FREEIMAGE_API_KEY."
+                    "Re-generate the image (so it uploads to CDN) and publish again."
                 )
         else:
             raise

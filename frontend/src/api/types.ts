@@ -76,6 +76,8 @@ export type SuburbRanksResponse = {
   not_ranking_count: number;
   map_competitors: MapPackPlace[];
   volume_source?: string;
+  search_radius_km?: number;
+  grid_suburb_total?: number;
 };
 
 export type ContentQueueItem = {

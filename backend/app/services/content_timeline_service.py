@@ -146,11 +146,11 @@ async def generate_monthly_timeline(session: AsyncSession, client_id: UUID) -> d
             if img:
                 photo_id = img.get("photo_id")
                 photo_url = img.get("url")
-                image_note = f"AI image generated (Runway, {img.get('archetype', 'creative')} style)."
+                image_note = f"AI image generated (OpenAI gpt-image-2, {img.get('archetype', 'creative')} style)."
                 if img.get("archetype"):
                     prior_archetypes.append(str(img["archetype"]))
-            elif not (settings.runwayml_api_key or "").strip():
-                image_note = "No image — set RUNWAYML_API_KEY for post photos."
+            elif not (settings.openai_api_key or "").strip():
+                image_note = "No image — set OPENAI_API_KEY for post photos (gpt-image-2)."
 
         if post_body:
             post_id = str(uuid7())

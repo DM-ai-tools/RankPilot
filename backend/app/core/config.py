@@ -74,6 +74,15 @@ class Settings(BaseSettings):
     anthropic_api_key: str = ""
     anthropic_content_model: str = ""  # optional; default Sonnet 4.6 in content_generation_service
     openai_api_key: str = ""
+    # Direct OpenAI Images API (GBP posts + Content Engine suburb/service page photos)
+    openai_image_model: str = Field(
+        default="gpt-image-2",
+        validation_alias=AliasChoices("OPENAI_IMAGE_MODEL", "OPENAI_GPT_IMAGE_MODEL"),
+    )
+    openai_image_quality: str = Field(
+        default="medium",
+        validation_alias=AliasChoices("OPENAI_IMAGE_QUALITY"),
+    )
     # OpenRouter (Perplexity Sonar) — SEO Website meta + GBP post direction prompts
     openrouter_api_key: str = Field(
         default="",
@@ -92,7 +101,7 @@ class Settings(BaseSettings):
         validation_alias=AliasChoices("OPENROUTER_CONTENT_MODEL", "ANTHROPIC_CONTENT_MODEL"),
     )
 
-    # --- Runway (GBP AI images — Gemini / Nano Banana via Runway API) ---
+    # --- Legacy Runway (optional fallback; image gen now uses OpenAI gpt-image-2) ---
     runwayml_api_key: str = Field(default="", validation_alias=AliasChoices("RUNWAYML_API_KEY", "RUNWAY_API_KEY"))
     runwayml_base_url: str = Field(
         default="https://api.dev.runwayml.com/v1",
