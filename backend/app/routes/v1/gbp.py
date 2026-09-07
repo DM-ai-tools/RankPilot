@@ -401,15 +401,28 @@ async def api_photo_publish_source(
     cid: UUID = Query(..., description="Client id (signed URL)"),
     exp: int = Query(..., description="Expiry unix timestamp"),
     sig: str = Query(..., description="HMAC signature"),
-) -> FileResponse:
-    """Public signed URL — Google fetches post images (no JWT; HMAC verified)."""
+):
+    """Public signed URL — Google fetches post images (no JWT; HMAC verified).
+
+    Serves from disk when present, otherwise rehydrates ``image_data`` from Postgres
+    (Railway ephemeral disks lose upload files across restarts / instances).
+    """
     from app.db.session import session_maker
+    from app.services.gbp_photos_service import resolve_publish_source_bytes
 
     async with session_maker()() as session:
-        path = await resolve_publish_source_file(session, photo_id, str(cid), exp, sig)
+        path_or_bytes, mime = await resolve_publish_source_bytes(
+            session, photo_id, str(cid), exp, sig
+        )
+    if isinstance(path_or_bytes, (bytes, bytearray)):
+        return Response(
+            content=bytes(path_or_bytes),
+            media_type=mime or "image/jpeg",
+            headers={"Cache-Control": "private, max-age=300"},
+        )
     return FileResponse(
-        str(path),
-        media_type=_mime_for_path(path),
+        str(path_or_bytes),
+        media_type=mime or _mime_for_path(path_or_bytes),  # type: ignore[arg-type]
         headers={"Cache-Control": "private, max-age=300"},
     )
 

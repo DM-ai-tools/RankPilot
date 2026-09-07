@@ -2504,20 +2504,30 @@ async def publish_gbp_queue_post(
 
     token = await _get_google_access_token(session, client_id, "gbp")
     photo_id = str(payload.get("photo_id") or "").strip()
+    # OpenAI images have no public URL (unlike Runway). Always resolve/host a CDN URL first.
     media_url = (
         await resolve_post_image_source_url(session, client_id, photo_id)
         if photo_id
         else None
     )
+    if photo_id:
+        payload["media_source_url"] = media_url
+        logger.info(
+            "GBP publish media for post %s photo %s → %s",
+            post_id,
+            photo_id,
+            (media_url or "NONE")[:160],
+        )
     note = (
         "Published to your Google Business Profile"
         + (" with image." if media_url else " (text only).")
     )
     if photo_id and not media_url:
         note = (
-            "Published (text only). Image not sent — could not host a public image URL for Google. "
-            "Free ngrok blocks Google's image fetch. Add FREEIMAGE_API_KEY or IMGBB_API_KEY, "
-            "or use Railway PUBLIC_API_BASE_URL (not ngrok-free)."
+            "Published (text only). Image not sent — could not create a public image URL for Google. "
+            "OpenAI returns image bytes (unlike Runway's public URL). Set FREEIMAGE_API_KEY or "
+            "IMGBB_API_KEY, and set PUBLIC_API_BASE_URL to your *backend* Railway API domain "
+            "(not the frontend SPA like rankpilot-serp-ai)."
         )
 
     v4_parent = await _resolve_v4_media_parent(token, intg["location_name"])
@@ -2528,7 +2538,7 @@ async def publish_gbp_queue_post(
         )
     except HTTPException as exc:
         if media_url and exc.status_code in (400, 502):
-            logger.warning("GBP post with image failed (%s), trying CDN fallback", exc.detail)
+            logger.warning("GBP post with image failed (%s), forcing CDN re-host", exc.detail)
             cdn_url = await resolve_post_image_source_url(
                 session, client_id, photo_id, prefer_cdn=True
             )
@@ -2537,16 +2547,17 @@ async def publish_gbp_queue_post(
                     gbp_post_name = await _publish_local_post_to_google(
                         token, v4_parent, post_body, cdn_url, cta_button=_cta
                     )
+                    payload["media_source_url"] = cdn_url
                     note = "Published to Google Business Profile with image (CDN fallback)."
-                except HTTPException:
-                    logger.warning("GBP post CDN image also failed, retrying text-only")
+                except HTTPException as exc2:
+                    logger.warning("GBP post CDN image also failed: %s — retrying text-only", exc2.detail)
                     gbp_post_name = await _publish_local_post_to_google(
                         token, v4_parent, post_body, None, cta_button=_cta
                     )
                     note = (
-                        "Published to Google (text only). Image was skipped — Google could not fetch the photo. "
-                        "Free ngrok is blocked by Google; RankPilot now uploads to a public CDN automatically — "
-                        "re-generate the post image and publish again."
+                        "Published to Google (text only). Google rejected the image URL. "
+                        "Set PUBLIC_API_BASE_URL to the backend API host and FREEIMAGE_API_KEY "
+                        "or IMGBB_API_KEY, then re-generate the post image and publish again."
                     )
             else:
                 logger.warning("GBP post with image failed (%s), retrying text-only", exc.detail)
@@ -2555,7 +2566,7 @@ async def publish_gbp_queue_post(
                 )
                 note = (
                     "Published to Google (text only). Image was skipped — Google could not fetch the photo URL. "
-                    "Re-generate the image (so it uploads to CDN) and publish again."
+                    "Re-generate the image and publish again (CDN host must succeed)."
                 )
         else:
             raise

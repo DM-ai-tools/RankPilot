@@ -7,6 +7,7 @@ import contextlib
 import hashlib
 import hmac
 import logging
+import os
 import re
 import time
 import urllib.parse
@@ -118,6 +119,12 @@ def _public_api_base(settings: Settings | None = None) -> str:
         if not explicit.lower().startswith("http"):
             explicit = f"https://{explicit}"
         return explicit.rstrip("/")
+    # Railway injects the *current service* public hostname (backend service only).
+    railway_domain = (os.environ.get("RAILWAY_PUBLIC_DOMAIN") or "").strip()
+    if railway_domain:
+        if not railway_domain.lower().startswith("http"):
+            railway_domain = f"https://{railway_domain}"
+        return railway_domain.rstrip("/")
     base = (s.google_redirect_base_url or "http://localhost:8000").strip().rstrip("/")
     callback = "/api/v1/integrations/google/callback"
     if base.endswith(callback):
@@ -131,13 +138,22 @@ def _is_ngrok_free_host(url: str) -> bool:
     return "ngrok-free." in low or ".ngrok.io" in low or "ngrok-free.dev" in low
 
 
+def _looks_like_spa_host(url: str) -> bool:
+    """Frontend Railway hosts serve index.html for unknown paths — unusable as image sourceUrl."""
+    low = (url or "").strip().lower()
+    # Common pattern: *-ai / *-web / *-frontend are SPAs; API should be separate.
+    markers = ("-web.", "-frontend.", "-spa.", "serp-ai.up.railway.app")
+    return any(m in low for m in markers)
+
+
 def _google_can_fetch_publish_url(settings: Settings | None = None) -> bool:
-    """True when sourceUrl is on the public internet (not localhost / free ngrok)."""
+    """True when sourceUrl is on the public internet (not localhost / free ngrok / SPA)."""
     low = _public_api_base(settings).lower()
     if "localhost" in low or "127.0.0.1" in low:
         return False
-    # Free ngrok interstitial returns HTML to Google → "Internal error encountered".
     if _is_ngrok_free_host(low):
+        return False
+    if _looks_like_spa_host(low):
         return False
     return low.startswith("https://")
 
@@ -381,10 +397,13 @@ async def resolve_post_image_source_url(
 ) -> str | None:
     """Public HTTPS URL Google can fetch for a GBP post image.
 
+    OpenAI returns raw bytes (unlike Runway's public CDN URL). We must always
+    produce a durable public HTTPS image URL before calling Google localPosts.
+
     Priority:
-    1. Durable CDN URL already stored on the photo row
-    2. Upload to a public CDN (always when prefer_cdn, localhost, or free ngrok)
-    3. Signed PUBLIC_API_BASE_URL only when Google can actually fetch it (not ngrok-free)
+    1. Durable CDN URL already stored on the photo row (Runway-equivalent)
+    2. Upload bytes to a public CDN now (catbox / imgbb / freeimage / …)
+    3. Signed API publish-source URL only when PUBLIC_API_BASE_URL is a real API host
     """
     photo_id = str(photo_id or "").strip()
     if not photo_id:
@@ -397,42 +416,69 @@ async def resolve_post_image_source_url(
         return None
     ext_url = str(row.get("external_source_url") or "").strip()
 
-    # 1. Prefer a durable public CDN URL (never tmpfiles / never free-ngrok hosts).
+    # 1. Prefer a durable public CDN URL (never tmpfiles / never free-ngrok / never SPA).
     if (
         _is_public_https_url(ext_url)
         and "tmpfiles.org" not in ext_url
         and not _is_ngrok_free_host(ext_url)
+        and not _looks_like_spa_host(ext_url)
     ):
         return ext_url
 
-    force_cdn = prefer_cdn or not _google_can_fetch_publish_url(settings)
+    # 2. ALWAYS try CDN first for OpenAI images — this replaces Runway's public URL.
+    #    prefer_cdn / missing ext_url / localhost / ngrok / SPA all take this path.
+    try:
+        materialized = await _materialize_photo_path(row)
+        cdn_url = await _host_image_publicly(materialized)
+        if cdn_url:
+            await _persist_external_source_url(session, client_id, photo_id, cdn_url)
+            logger.info("GBP post image public URL ready (CDN): %s", cdn_url[:120])
+            return cdn_url
+        logger.warning("CDN host returned no URL for photo %s", photo_id)
+    except HTTPException as exc:
+        logger.warning("Post image CDN host failed for %s: %s", photo_id, exc.detail)
+        if prefer_cdn:
+            return None
+    except Exception:
+        logger.warning("Post image CDN host failed for %s", photo_id, exc_info=True)
+        if prefer_cdn:
+            return None
 
-    # 2. Host on a public CDN Google can fetch without interstitial pages.
-    if force_cdn or prefer_cdn or not ext_url:
-        try:
-            materialized = await _materialize_photo_path(row)
-            cdn_url = await _host_image_publicly(materialized)
-            if cdn_url:
-                await _persist_external_source_url(session, client_id, photo_id, cdn_url)
-                return cdn_url
-        except HTTPException as exc:
-            logger.warning("Post image CDN host failed for %s: %s", photo_id, exc.detail)
-            if prefer_cdn:
-                return None
-        except Exception:
-            logger.warning("Post image CDN host failed for %s", photo_id, exc_info=True)
-            if prefer_cdn:
-                return None
-
-    # 3. Signed API URL — only when PUBLIC_API_BASE_URL is truly Google-reachable.
-    if _google_can_fetch_publish_url(settings):
+    # 3. Signed API URL — only when PUBLIC_API_BASE_URL is a real backend (not the SPA).
+    if not prefer_cdn and _google_can_fetch_publish_url(settings):
         try:
             await _materialize_photo_path(row)
-            return build_photo_publish_source_url(photo_id, client_id, settings)
+            signed = build_photo_publish_source_url(photo_id, client_id, settings)
+            if await _self_check_image_url(signed):
+                logger.info("GBP post image public URL ready (signed API): %s", signed[:120])
+                return signed
+            logger.warning(
+                "Signed publish-source URL did not return an image (check PUBLIC_API_BASE_URL "
+                "points at the backend API, not the frontend SPA): %s",
+                signed[:160],
+            )
         except HTTPException:
             pass
 
     return None
+
+
+async def _self_check_image_url(url: str) -> bool:
+    """Confirm our own publish-source URL returns image bytes (not SPA HTML)."""
+    try:
+        async with httpx.AsyncClient(timeout=20.0, follow_redirects=True) as http:
+            resp = await http.get(url, headers={"User-Agent": "RankPilot-ImageCheck/1.0"})
+        if not resp.is_success:
+            return False
+        ctype = (resp.headers.get("content-type") or "").lower()
+        body = resp.content or b""
+        if "text/html" in ctype:
+            return False
+        if ctype.startswith("image/"):
+            return True
+        return body[:3] == b"\xff\xd8\xff" or body[:8] == b"\x89PNG\r\n\x1a\n"
+    except Exception:
+        return False
 
 
 async def resolve_publish_source_file(
@@ -445,12 +491,53 @@ async def resolve_publish_source_file(
     settings = get_settings()
     if not _verify_publish_signature(photo_id, client_id, exp, sig, settings.jwt_secret_key):
         raise HTTPException(status_code=403, detail="Invalid or expired publish link")
+    # HMAC already authenticates the request — bypass RLS so Google can fetch
+    # even if session GUC app.client_id is missing on a cold worker.
+    await session.execute(text("SELECT set_config('row_security', 'off', true)"))
     await session.execute(
         text("SELECT set_config('app.client_id', :cid, true)"),
         {"cid": client_id},
     )
     row = await _get_photo_row(session, client_id, photo_id)
     return await _materialize_photo_path(row)
+
+
+async def resolve_publish_source_bytes(
+    session: AsyncSession,
+    photo_id: str,
+    client_id: str,
+    exp: int,
+    sig: str,
+) -> tuple[Path | bytes, str]:
+    """Return (path|bytes, mime) for Google fetch — prefers DB bytes on Railway."""
+    settings = get_settings()
+    if not _verify_publish_signature(photo_id, client_id, exp, sig, settings.jwt_secret_key):
+        raise HTTPException(status_code=403, detail="Invalid or expired publish link")
+    await session.execute(text("SELECT set_config('row_security', 'off', true)"))
+    await session.execute(
+        text("SELECT set_config('app.client_id', :cid, true)"),
+        {"cid": client_id},
+    )
+    row = await _get_photo_row(session, client_id, photo_id)
+    path = Path(str(row["storage_path"]))
+    if path.is_file():
+        return path, _mime_for_path(path)
+
+    img_bytes = row.get("image_data")
+    if img_bytes:
+        raw = bytes(img_bytes)
+        # Best-effort rehydrate for subsequent hits on this instance.
+        with contextlib.suppress(Exception):
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(raw)
+        mime = "image/jpeg" if raw[:3] == b"\xff\xd8\xff" else "image/png"
+        if path.is_file():
+            return path, mime
+        return raw, mime
+
+    # Fall back to CDN re-download / materialize.
+    materialized = await _materialize_photo_path(row)
+    return materialized, _mime_for_path(materialized)
 
 
 async def resolve_photo_file(
@@ -1100,7 +1187,46 @@ async def _upload_catbox(http: httpx.AsyncClient, data: bytes, filename: str, mi
     if _is_public_https_url(url) and "catbox.moe" in url.lower():
         if await _verify_public_image_url(http, url):
             return url
-        # Catbox often works even when HEAD is blocked.
+        return url
+    return None
+
+
+async def _upload_litterbox(http: httpx.AsyncClient, data: bytes, filename: str, mime: str) -> str | None:
+    """Keyless temporary host (72h) — good fallback when catbox is blocked."""
+    try:
+        resp = await http.post(
+            "https://litterbox.catbox.moe/resources/internals/api.php",
+            data={"reqtype": "fileupload", "time": "72h"},
+            files={"fileToUpload": (filename, data, mime)},
+            headers={"User-Agent": "RankPilot/1.0"},
+        )
+    except Exception:
+        logger.warning("litterbox upload failed", exc_info=True)
+        return None
+    if not resp.is_success:
+        logger.warning("litterbox upload HTTP %s: %s", resp.status_code, resp.text[:200])
+        return None
+    url = (resp.text or "").strip()
+    if _is_public_https_url(url) and "catbox.moe" in url.lower():
+        return url
+    return None
+
+
+async def _upload_0x0(http: httpx.AsyncClient, data: bytes, filename: str, mime: str) -> str | None:
+    try:
+        resp = await http.post(
+            "https://0x0.st",
+            files={"file": (filename, data, mime)},
+            headers={"User-Agent": "RankPilot/1.0"},
+        )
+    except Exception:
+        logger.warning("0x0.st upload failed", exc_info=True)
+        return None
+    if not resp.is_success:
+        logger.warning("0x0.st upload HTTP %s: %s", resp.status_code, resp.text[:200])
+        return None
+    url = (resp.text or "").strip().split()[0] if resp.text else ""
+    if _is_public_https_url(url):
         return url
     return None
 
@@ -1115,8 +1241,14 @@ def _jpeg_bytes_for_google(file_path: Path) -> tuple[bytes, str, str]:
 
         with Image.open(file_path) as im:
             rgb = im.convert("RGB")
+            # GBP localPosts are happier with reasonably sized JPEGs.
+            max_side = 1600
+            w, h = rgb.size
+            if max(w, h) > max_side:
+                scale = max_side / float(max(w, h))
+                rgb = rgb.resize((max(1, int(w * scale)), max(1, int(h * scale))))
             buf = io.BytesIO()
-            rgb.save(buf, format="JPEG", quality=90, optimize=True)
+            rgb.save(buf, format="JPEG", quality=88, optimize=True)
             data = buf.getvalue()
             if len(data) >= _MIN_PHOTO_BYTES:
                 return data, f"{name}.jpg", "image/jpeg"
@@ -1126,7 +1258,7 @@ def _jpeg_bytes_for_google(file_path: Path) -> tuple[bytes, str, str]:
 
 
 async def _host_image_publicly(file_path: Path) -> str | None:
-    """Upload image to a public HTTPS host Google can fetch (no ngrok interstitial)."""
+    """Upload image to a public HTTPS host Google can fetch (Runway-equivalent public URL)."""
     settings = get_settings()
     data, filename, mime = _jpeg_bytes_for_google(file_path)
     freeimage_key = (settings.freeimage_api_key or "").strip()
@@ -1137,6 +1269,8 @@ async def _host_image_publicly(file_path: Path) -> str | None:
             ("freeimage", lambda: _upload_freeimage(http, data, freeimage_key)),
             ("imgbb", lambda: _upload_imgbb(http, data, imgbb_key)),
             ("catbox", lambda: _upload_catbox(http, data, filename, mime)),
+            ("litterbox", lambda: _upload_litterbox(http, data, filename, mime)),
+            ("0x0", lambda: _upload_0x0(http, data, filename, mime)),
             ("tmpfiles", lambda: _upload_tmpfiles(http, Path(filename), data, mime)),
         )
         for label, factory in attempts:
